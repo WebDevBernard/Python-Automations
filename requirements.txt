@@ -1,0 +1,11 @@
+pyinstaller
+auto-py-to-exe            
+openpyxl                  
+pandas
+Pyarrow
+docxtpl
+pymupdf
+pymupdf-fonts
+xlrd
+tabulate
+FreeSimpleGui
