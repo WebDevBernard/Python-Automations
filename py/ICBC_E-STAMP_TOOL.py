@@ -12,7 +12,6 @@ def get_output_dir(subfolder_name="ICBC E-Stamp Copies"):
     if desktop_path.exists():
         return desktop_path / subfolder_name
     else:
-        # Fallback: one level above the script
         return Path(__file__).parent.parent / subfolder_name
 
 
@@ -40,6 +39,10 @@ insured_pattern = re.compile(
 customer_copy_pattern = re.compile(r"customer copy", re.IGNORECASE)
 validation_stamp_pattern = re.compile(r"NOT VALID UNLESS STAMPED BY", re.IGNORECASE)
 time_of_validation_pattern = re.compile(r"TIME OF VALIDATION", re.IGNORECASE)
+temporary_permit_pattern = re.compile(
+    r"Temporary Operation Permit and Owner’s Certificate of Insurance",
+    re.IGNORECASE,
+)
 agency_number_pattern = re.compile(
     r"Agency Number\s*[:#]?\s*([A-Z0-9]+)", re.IGNORECASE
 )
@@ -104,10 +107,11 @@ def scan_icbc_pdfs(input_dir, output_dir, max_docs):
                 payment_text = first_page.get_text(clip=payment_plan_rect)
 
                 ts_match = timestamp_pattern.search(ts_text)
-                if ts_match and ts_match.group(1) not in existing_timestamps:
-                    timestamp = ts_match.group(1)
-                else:
-                    timestamp = None
+                timestamp = (
+                    ts_match.group(1)
+                    if ts_match and ts_match.group(1) not in existing_timestamps
+                    else None
+                )
 
                 if payment_plan_pattern.search(payment_text):
                     continue
@@ -125,6 +129,8 @@ def scan_icbc_pdfs(input_dir, output_dir, max_docs):
                     if insured_match
                     else None
                 )
+
+                temp_permit_found = bool(temporary_permit_pattern.search(text))
 
                 agency_match = agency_number_pattern.search(text)
                 agency_number = (
@@ -151,6 +157,7 @@ def scan_icbc_pdfs(input_dir, output_dir, max_docs):
                     "transaction_timestamp": timestamp,
                     "license_plate": license_plate,
                     "insured_name": insured_name,
+                    "temporary_operation_permit": temp_permit_found,
                     "agency_number": agency_number,
                     "customer_copy_pages": customer_copy_pages,
                     "not_valid_coords": not_valid_coords,
@@ -164,13 +171,6 @@ def scan_icbc_pdfs(input_dir, output_dir, max_docs):
 
 
 # -------------------- PDF Processing -------------------- #
-def stamp_pdf(doc, agency_number, ts_dt):
-    x0, y0, x1, y1 = timestamp_rect
-    text = f"Agency: {agency_number}   Timestamp: {format_timestamp_mmmddyyyy_from_dt(ts_dt)}"
-    doc[0].insert_text((x0, y0), text, fontname="helv", fontsize=10, color=(0, 0, 0))
-    return doc
-
-
 def validation_annot(doc, info, ts_dt):
     for page_num, coords in info.get("not_valid_coords", []):
         page = doc[page_num]
@@ -214,7 +214,6 @@ def stamp_time_of_validation(doc, info, ts_dt):
     return doc
 
 
-# -------------------- PDF Processing -------------------- #
 def save_batch_copy(doc, info, output_dir):
     batch_dir = Path(output_dir) / "ICBC Batch Copies"
     batch_dir.mkdir(parents=True, exist_ok=True)
@@ -227,12 +226,16 @@ def save_batch_copy(doc, info, output_dir):
 def create_customer_copy(doc, info, output_dir):
     total_pages = doc.page_count
     customer_pages = info.get("customer_copy_pages", [])
+    if info.get("temporary_operation_permit") and total_pages - 1 not in customer_pages:
+        customer_pages.append(total_pages - 1)
     pages_to_delete = [i for i in range(total_pages) if i not in customer_pages]
     for page_num in reversed(pages_to_delete):
         doc.delete_page(page_num)
     base_name = info.get("license_plate") or info.get("insured_name") or "UNKNOWN"
-    customer_copy_path = Path(output_dir) / f"{base_name} (Customer Copies).pdf"
+    customer_copy_name = f"{base_name} (Customer Copies).pdf"
+    customer_copy_path = Path(output_dir) / customer_copy_name
     doc.save(customer_copy_path)
+    print(f"✅ Saved customer copy PDF: {customer_copy_path}")
     doc.close()
     return customer_copy_path
 
@@ -257,16 +260,9 @@ def main():
     )
     stamped_counter = 0
 
-    data, total_scanned = scan_icbc_pdfs(
-        DEFAULTS["input_dir"], DEFAULTS["output_dir"], DEFAULTS["number_of_pdfs"]
-    )
-    stamped_counter = 0
-
     for path, info in data.items():
-        # Skip if no new timestamp
         if not info["transaction_timestamp"]:
             continue
-
         ts = info["transaction_timestamp"]
         if ts in find_existing_timestamps(DEFAULTS["output_dir"]):
             continue  # Already stamped, skip
@@ -274,11 +270,17 @@ def main():
         ts_dt = format_transaction_timestamp(ts)
         try:
             doc = fitz.open(path)
-            doc = stamp_pdf(doc, info["agency_number"], ts_dt)
+
+            # Apply only validation and time-of-validation stamps
             doc = validation_annot(doc, info, ts_dt)
             doc = stamp_time_of_validation(doc, info, ts_dt)
+
+            # Save batch copy WITHOUT top timestamp
             save_batch_copy(doc, info, DEFAULTS["output_dir"])
+
+            # Create customer copy WITHOUT top timestamp
             create_customer_copy(doc, info, DEFAULTS["output_dir"])
+
             stamped_counter += 1
         except Exception as e:
             print(f"❌ Error processing {path}: {e}")
