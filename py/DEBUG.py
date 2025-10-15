@@ -1,4 +1,5 @@
 import fitz
+import re
 from pathlib import Path
 from tabulate import tabulate
 
@@ -21,6 +22,24 @@ def get_text(doc, mode="blocks"):
             blocks.append({"words": text_lines, "coords": coords})
         pages_dict[page_num] = blocks
     return pages_dict
+
+
+def search_text(pdf_path):
+
+    doc = fitz.open(pdf_path)
+    match = re.search(
+        r"(?:Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))\s*\n([^\n]+)",
+        "\n".join([doc[0].get_text("text")]),
+        re.IGNORECASE,
+    )
+    print("\n".join([doc[0].get_text("text")]))
+    if match:
+        name = match.group(1)
+        name = re.sub(r"[.:/\\*?\"<>|]", "", name)
+        name = re.sub(r"\s+", " ", name).strip().title()
+        return name
+
+    return None
 
 
 def write_txt_to_file(file_path, field_dict):
@@ -65,24 +84,28 @@ def save_region_as_png(doc, page_num, coords, prefix="Region"):
     print(f"Saved highlighted page to: {output_file}")
 
 
-# === Toggle behavior here ===
-USE_IMAGE_EXTRACTION = True  # Set to False to use text extraction instead
+# === Toggle options ===
+# Choose which feature to run:
+#   "extract_text"  → extract and save all text
+#   "search_text"   → search a pattern in the PDFs
+#   "extract_image" → highlight region and save image
+MODE = "search_text"
+
+SEARCH_PATTERN = r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))"  # Used when MODE == "search_text"
 
 for pdf_file in pdf_files:
+    print(search_text(pdf_file))
     with fitz.open(pdf_file) as doc:
-        if USE_IMAGE_EXTRACTION:
-            # Example: save a region (replace with your actual coordinates)
-            save_region_as_png(
-                doc,
-                page_num=2,
-                coords=(
-                    421.1990051269531,
-                    466.42271728515624,
-                    472.5530700683594,
-                    471.72271728515625,
-                ),
-            )
-        else:
+        if MODE == "extract_text":
             text_data = get_text(doc)
             output_file = output_dir / f"{pdf_file.stem}.txt"
             write_txt_to_file(output_file, text_data)
+            print(f"✅ Saved text to: {output_file}")
+
+        elif MODE == "extract_image":
+            # Example coordinates — replace with your own
+            coords = (421.199, 466.423, 472.553, 471.723)
+            save_region_as_png(doc, page_num=2, coords=coords)
+
+        else:
+            print(f"⚠️ Unknown mode: {MODE}")

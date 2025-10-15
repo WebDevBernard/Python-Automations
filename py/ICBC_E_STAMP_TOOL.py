@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 from datetime import datetime
 import timeit
+import os
+import sys
 import time
 
 # -------------------- Defaults -------------------- #
@@ -15,6 +17,7 @@ DEFAULTS = {
     ),
     "input_dir": str(Path.home() / "Downloads"),
 }
+
 # -------------------- Patterns and Rectangles -------------------- #
 timestamp_rect = (409.979, 63.8488, 576.0, 83.7455)
 payment_plan_rect = (425.402, 35.9664, 557.916, 48.3001)
@@ -25,33 +28,46 @@ payment_plan_pattern = re.compile(r"Payment Plan Agreement", re.IGNORECASE)
 license_plate_pattern = re.compile(
     r"Licence Plate Number\s*([A-Z0-9\- ]+)", re.IGNORECASE
 )
-insured_pattern = re.compile(
-    r"(Owner|Applicant|Name of Insured)",  # group 1 will return matched text
-    re.IGNORECASE,
-)
-
-customer_copy_pattern = re.compile(r"customer copy", re.IGNORECASE)
-validation_stamp_pattern = re.compile(r"NOT VALID UNLESS STAMPED BY", re.IGNORECASE)
-time_of_validation_pattern = re.compile(r"TIME OF VALIDATION", re.IGNORECASE)
 temporary_permit_pattern = re.compile(
-    r"Temporary Operation Permit and Owner’s Certificate of Insurance",
-    re.IGNORECASE,
+    r"Temporary Operation Permit and Owner’s Certificate of Insurance", re.IGNORECASE
 )
 agency_number_pattern = re.compile(
     r"Agency Number\s*[:#]?\s*([A-Z0-9]+)", re.IGNORECASE
 )
+customer_copy_pattern = re.compile(r"customer copy", re.IGNORECASE)
+validation_stamp_pattern = re.compile(r"NOT VALID UNLESS STAMPED BY", re.IGNORECASE)
+time_of_validation_pattern = re.compile(r"TIME OF VALIDATION", re.IGNORECASE)
 
 validation_stamp_coords_box_offset = (-4.25, 23.77, 1.58, 58.95)
 time_of_validation_offset = (0.0, 10.35, 0.0, 40)
 time_stamp_offset = (0, 13, 0, 0)
-time_of_validation_am_offset = (0, 0.7, 0, 0)
-time_of_validation_pm_offset = (0, 21.9, 0, 0)
+time_of_validation_am_offset = (0, -0.6, 0, 0)
+time_of_validation_pm_offset = (0, 21.2, 0, 0)
 
 
 # -------------------- Utility Functions -------------------- #
-def reverse_name(name):
-    parts = [p for p in name.replace(",", " ").split() if p]
-    return " ".join(parts[1:] + [parts[0]]).title() if len(parts) > 1 else name.title()
+def progressbar(it, prefix="", size=60, out=sys.stdout):
+    count = len(it)
+    start = time.time()
+
+    def show(j):
+        x = int(size * j / count)
+        remaining = ((time.time() - start) / j) * (count - j) if j else 0
+        mins, sec = divmod(remaining, 60)
+        time_str = f"{int(mins):02}:{sec:03.1f}"
+        print(
+            f"{prefix}[{'█' * x}{'.' * (size - x)}] {j}/{count} Est wait {time_str}",
+            end="\r",
+            file=out,
+            flush=True,
+        )
+
+    if len(it) > 0:
+        show(0.1)
+        for i, item in enumerate(it):
+            yield item
+            show(i + 1)
+        print(flush=True, file=out)
 
 
 def format_transaction_timestamp(timestamp_str):
@@ -78,97 +94,45 @@ def find_existing_timestamps(folder):
     return timestamps
 
 
-# -------------------- PDF Scanning -------------------- #
-def scan_icbc_pdfs(input_dir, output_dir, max_docs):
-    input_dir, output_dir = Path(input_dir), Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    existing_timestamps = find_existing_timestamps(output_dir)
-    icbc_data = {}
-
-    pdf_files = sorted(
-        input_dir.glob("*.pdf"), key=lambda f: f.stat().st_mtime, reverse=True
-    )[:max_docs]
-
-    for pdf_path in pdf_files:
-        try:
-            with fitz.open(pdf_path) as doc:
-                if doc.page_count == 0:
-                    continue
-
-                first_page = doc[0]
-                text = first_page.get_text("text")
-                ts_text = first_page.get_text(clip=timestamp_rect)
-                payment_text = first_page.get_text(clip=payment_plan_rect)
-
-                ts_match = timestamp_pattern.search(ts_text)
-                timestamp = (
-                    ts_match.group(1)
-                    if ts_match and ts_match.group(1) not in existing_timestamps
-                    else None
-                )
-
-                if payment_plan_pattern.search(payment_text):
-                    continue
-
-                license_plate_match = license_plate_pattern.search(text)
-                license_plate = (
-                    license_plate_match.group(1).strip().upper()
-                    if license_plate_match
-                    else None
-                )
-
-                insured_match = insured_pattern.search(text)
-                insured_name = (
-                    reverse_name(insured_match.group(1).strip())
-                    if insured_match
-                    else None
-                )
-
-                temp_permit_found = bool(temporary_permit_pattern.search(text))
-
-                agency_match = agency_number_pattern.search(text)
-                agency_number = (
-                    agency_match.group(1).strip() if agency_match else "UNKNOWN"
-                )
-
-                (
-                    customer_copy_pages,
-                    validation_stamp_coords,
-                    time_of_validation_coords,
-                ) = (
-                    [],
-                    [],
-                    [],
-                )
-                for page_num, page in enumerate(doc):
-                    clipped_customer_copy = page.get_text(clip=customer_copy_rect)
-                    if customer_copy_pattern.search(clipped_customer_copy):
-                        customer_copy_pages.append(page_num)
-                    for w in page.get_text("blocks"):
-                        word_text, coords = w[4], w[:4]
-                        if validation_stamp_pattern.search(word_text):
-                            validation_stamp_coords.append((page_num, coords))
-                        if time_of_validation_pattern.search(word_text):
-                            time_of_validation_coords.append((page_num, coords))
-
-                icbc_data[pdf_path] = {
-                    "transaction_timestamp": timestamp,
-                    "license_plate": license_plate,
-                    "insured_name": insured_name,
-                    "temporary_operation_permit": temp_permit_found,
-                    "agency_number": agency_number,
-                    "customer_copy_pages": customer_copy_pages,
-                    "validation_stamp_coords": validation_stamp_coords,
-                    "time_of_validation_coords": time_of_validation_coords,
-                }
-
-        except Exception as e:
-            print(f"❌ Error processing {pdf_path}: {e}")
-    return icbc_data, len(pdf_files)
+def unique_file_name(path):
+    filename, extension = os.path.splitext(path)
+    counter = 1
+    while Path(path).is_file():
+        path = filename + " (" + str(counter) + ")" + extension
+        counter += 1
+    return path
 
 
-# -------------------- PDF Processing -------------------- #
-def validation_annot(doc, info, ts_dt):
+def reverse_insured_name(name):
+    if not name:
+        return ""
+
+    name = re.sub(r"\s+", " ", name.strip())
+    if name.endswith(("Ltd", "Inc")):
+        return name
+    name = name.replace(",", "")
+    parts = name.split(" ")
+    if len(parts) == 1:
+        return name
+    return " ".join(parts[1:] + [parts[0]])
+
+
+def search_insured_name(full_text_first_page):
+    match = re.search(
+        r"(?:Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))\s*\n([^\n]+)",
+        full_text_first_page,
+        re.IGNORECASE,
+    )
+    if match:
+        name = match.group(1)
+        name = re.sub(r"[.:/\\*?\"<>|]", "", name)
+        name = re.sub(r"\s+", " ", name).strip().title()
+        return name
+    return None
+
+
+# -------------------- PDF Stamping Functions -------------------- #
+def validation_stamp(doc, info, ts_dt):
     for page_num, coords in info.get("validation_stamp_coords", []):
         page = doc[page_num]
         x0, y0, x1, y1 = coords
@@ -206,12 +170,13 @@ def stamp_time_of_validation(doc, info, ts_dt):
             dy0 += time_of_validation_pm_offset[1]
         time_rect = fitz.Rect(x0 + dx0, y0 + dy0, x1 + dx1, y1 + dy1)
         page.insert_textbox(
-            time_rect, ts_dt.strftime("%I:%M %p"), fontname="helv", fontsize=6, align=2
+            time_rect, ts_dt.strftime("%I:%M"), fontname="helv", fontsize=6, align=2
         )
     return doc
 
 
 def get_base_name(info):
+    transaction_timestamp = info.get("transaction_timestamp") or ""
     license_plate = (info.get("license_plate") or "").strip().upper()
     insured_name = (info.get("insured_name") or "").strip()
     insured_name = re.sub(r"[.:/\\*?\"<>|]", "", insured_name)
@@ -221,6 +186,8 @@ def get_base_name(info):
         base_name = license_plate
     elif insured_name:
         base_name = insured_name
+    elif transaction_timestamp:
+        base_name = transaction_timestamp
     else:
         base_name = "UNKNOWN"
     return base_name
@@ -231,11 +198,12 @@ def save_batch_copy(doc, info, output_dir):
     batch_dir.mkdir(parents=True, exist_ok=True)
     base_name = get_base_name(info)
     batch_copy_path = batch_dir / f"{base_name}.pdf"
-    doc.save(batch_copy_path)
+    batch_copy_path = Path(unique_file_name(batch_copy_path))
+    doc.save(batch_copy_path, garbage=4, deflate=True)
     return batch_copy_path
 
 
-def create_customer_copy(doc, info, output_dir):
+def save_customer_copy(doc, info, output_dir):
     total_pages = doc.page_count
     customer_pages = info.get("customer_copy_pages", [])
     if info.get("temporary_operation_permit") and total_pages - 1 not in customer_pages:
@@ -246,41 +214,130 @@ def create_customer_copy(doc, info, output_dir):
     base_name = get_base_name(info)
     customer_copy_name = f"{base_name} (Customer Copies).pdf"
     customer_copy_path = Path(output_dir) / customer_copy_name
-    doc.save(customer_copy_path)
+    customer_copy_path = Path(unique_file_name(customer_copy_path))
+    doc.save(customer_copy_path, garbage=4, deflate=True)
     return customer_copy_path
 
 
-# -------------------- Main -------------------- #
+# -------------------- Main Function -------------------- #
 def icbc_e_stamp_tool():
-
     print("📄 ICBC E-Stamp Tool")
-
     start_total = timeit.default_timer()
 
-    data, total_scanned = scan_icbc_pdfs(
-        DEFAULTS["input_dir"], DEFAULTS["output_dir"], DEFAULTS["number_of_pdfs"]
-    )
-    stamped_counter = 0
+    input_dir = DEFAULTS["input_dir"]
+    output_dir = DEFAULTS["output_dir"]
+    max_docs = DEFAULTS["number_of_pdfs"]
 
-    for path, info in data.items():
+    pdf_files = sorted(
+        Path(input_dir).glob("*.pdf"), key=lambda f: f.stat().st_mtime, reverse=True
+    )[:max_docs]
+
+    icbc_data = {}
+    existing_timestamps = find_existing_timestamps(output_dir)
+
+    # -------------------- Stage 1: Scan PDFs -------------------- #
+    print("🔍 Scanning PDFs...")
+    for pdf_path in progressbar(pdf_files, prefix="Scanning PDFs: ", size=40):
+        try:
+            with fitz.open(pdf_path) as doc:
+                if doc.page_count == 0:
+                    continue
+
+                first_page = doc[0]
+                full_text_first_page = "\n".join([first_page.get_text("text")])
+                ts_text = first_page.get_text(clip=timestamp_rect)
+                payment_text = first_page.get_text(clip=payment_plan_rect)
+
+                ts_match = timestamp_pattern.search(ts_text)
+                timestamp = (
+                    ts_match.group(1)
+                    if ts_match and ts_match.group(1) not in existing_timestamps
+                    else None
+                )
+
+                if payment_plan_pattern.search(payment_text):
+                    continue
+
+                license_plate_match = license_plate_pattern.search(full_text_first_page)
+                license_plate = (
+                    license_plate_match.group(1).strip().upper()
+                    if license_plate_match
+                    else None
+                )
+
+                insured_name = reverse_insured_name(
+                    search_insured_name(full_text_first_page)
+                )
+
+                temp_permit_found = bool(
+                    temporary_permit_pattern.search(full_text_first_page)
+                )
+
+                agency_match = agency_number_pattern.search(full_text_first_page)
+                agency_number = (
+                    agency_match.group(1).strip() if agency_match else "UNKNOWN"
+                )
+
+                customer_copy_pages = []
+                validation_stamp_coords = []
+                time_of_validation_coords = []
+
+                for page_num, page in enumerate(doc):
+                    clipped_customer_copy = page.get_text(clip=customer_copy_rect)
+                    if customer_copy_pattern.search(clipped_customer_copy):
+                        customer_copy_pages.append(page_num)
+
+                    for block in page.get_text("blocks"):
+                        word_text, coords = block[4], block[:4]
+                        if validation_stamp_pattern.search(word_text):
+                            validation_stamp_coords.append((page_num, coords))
+                        if time_of_validation_pattern.search(word_text):
+                            time_of_validation_coords.append((page_num, coords))
+
+                icbc_data[pdf_path] = {
+                    "transaction_timestamp": timestamp,
+                    "license_plate": license_plate,
+                    "insured_name": insured_name,
+                    "temporary_operation_permit": temp_permit_found,
+                    "agency_number": agency_number,
+                    "customer_copy_pages": customer_copy_pages,
+                    "validation_stamp_coords": validation_stamp_coords,
+                    "time_of_validation_coords": time_of_validation_coords,
+                }
+
+        except Exception as e:
+            print(f"❌ Error scanning {pdf_path}: {e}")
+
+    total_scanned = len(pdf_files)
+
+    # -------------------- Stage 2: Process PDFs -------------------- #
+    print("\n✍️ Processing PDFs...")
+    stamped_counter = 0
+    for path, info in progressbar(
+        list(icbc_data.items()), prefix="Processing PDFs: ", size=40
+    ):
         if not info["transaction_timestamp"]:
             continue
         ts = info["transaction_timestamp"]
-        if ts in find_existing_timestamps(DEFAULTS["output_dir"]):
+        if ts in find_existing_timestamps(output_dir):
             continue
 
         ts_dt = format_transaction_timestamp(ts)
+
         try:
-            doc = fitz.open(path)
+            doc_batch = fitz.open(path)
+            doc_customer = fitz.open(path)
 
-            doc = validation_annot(doc, info, ts_dt)
-            doc = stamp_time_of_validation(doc, info, ts_dt)
+            doc_batch = validation_stamp(doc_batch, info, ts_dt)
+            doc_batch = stamp_time_of_validation(doc_batch, info, ts_dt)
+            doc_customer = validation_stamp(doc_customer, info, ts_dt)
+            doc_customer = stamp_time_of_validation(doc_customer, info, ts_dt)
 
-            save_batch_copy(doc, info, DEFAULTS["output_dir"])
-
-            create_customer_copy(doc, info, DEFAULTS["output_dir"])
+            save_batch_copy(doc_batch, info, output_dir)
+            save_customer_copy(doc_customer, info, output_dir)
 
             stamped_counter += 1
+
         except Exception as e:
             print(f"❌ Error processing {path}: {e}")
 
@@ -288,11 +345,6 @@ def icbc_e_stamp_tool():
     print(f"\nTotal PDFs scanned: {total_scanned}")
     print(f"Total PDFs stamped: {stamped_counter}")
     print(f"✅ Total script execution time: {end_total - start_total:.2f} seconds")
-    print("\nExiting in ", end="")
-    for i in range(3, 0, -1):
-        print(f"{i} ", end="", flush=True)
-        time.sleep(1)
-    print("\n")
 
 
 if __name__ == "__main__":

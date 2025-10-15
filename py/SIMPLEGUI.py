@@ -45,7 +45,7 @@ def create_window():
     dpad_layout = [
         [
             sg.Text(
-                "Suetendo GAME BOY™",
+                "Nintendo GAME BOY™",
                 justification="left",
                 font=("Helvetica", 14, "bold"),
             )
