@@ -59,7 +59,7 @@ def create_window():
         ],
         [
             sg.Text("", size=(1, 1)),
-            sg.Button("Instant CSIO", size=btn_size, **dpad_button_style),
+            sg.Button("Reconciler", size=btn_size, **dpad_button_style),
             sg.Text("", size=(1, 1)),
         ],
         [sg.Text("", size=(1, 1))],
@@ -100,7 +100,7 @@ def create_window():
             ),
         ],
         [
-            sg.Button("Reconciler", size=(15, 1), **bottom_button_style),
+            sg.Button("Do Not Press", size=(15, 1), **bottom_button_style),
             sg.Button("Exit", size=(18, 1), **bottom_button_style),
         ],
         [

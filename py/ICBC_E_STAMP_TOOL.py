@@ -10,11 +10,7 @@ import time
 # -------------------- Defaults -------------------- #
 DEFAULTS = {
     "number_of_pdfs": 10,
-    "output_dir": str(
-        (Path.home() / "Desktop" / "ICBC E-Stamp Copies")
-        if (Path.home() / "Desktop").exists()
-        else (Path(__file__).parent.parent / "ICBC E-Stamp Copies")
-    ),
+    "output_dir": str(Path.home() / "Desktop" / "ICBC E-Stamp Copies"),
     "input_dir": str(Path.home() / "Downloads"),
 }
 
@@ -78,9 +74,15 @@ def format_timestamp_mmmddyyyy_from_dt(dt):
     return dt.strftime("%b%d%Y")
 
 
-def find_existing_timestamps(folder):
+def find_existing_timestamps(base_name, folder):
     timestamps = set()
-    for pdf_file in Path(folder).rglob("*.pdf"):
+    base_name = base_name.strip().upper()
+
+    for pdf_file in Path(folder).glob("*.pdf"):
+        filename = pdf_file.stem.upper()
+        if not filename.startswith(base_name):
+            continue
+
         try:
             with fitz.open(pdf_file) as doc:
                 if doc.page_count > 0:
@@ -89,8 +91,9 @@ def find_existing_timestamps(folder):
                     )
                     if ts_match:
                         timestamps.add(ts_match.group(1))
-        except:
+        except Exception:
             continue
+
     return timestamps
 
 
@@ -106,7 +109,6 @@ def unique_file_name(path):
 def reverse_insured_name(name):
     if not name:
         return ""
-
     name = re.sub(r"\s+", " ", name.strip())
     if name.endswith(("Ltd", "Inc")):
         return name
@@ -212,7 +214,7 @@ def save_customer_copy(doc, info, output_dir):
     for page_num in reversed(pages_to_delete):
         doc.delete_page(page_num)
     base_name = get_base_name(info)
-    customer_copy_name = f"{base_name} (Customer Copies).pdf"
+    customer_copy_name = f"{base_name} (Customer Copy).pdf"
     customer_copy_path = Path(output_dir) / customer_copy_name
     customer_copy_path = Path(unique_file_name(customer_copy_path))
     doc.save(customer_copy_path, garbage=4, deflate=True)
@@ -233,11 +235,10 @@ def icbc_e_stamp_tool():
     )[:max_docs]
 
     icbc_data = {}
-    existing_timestamps = find_existing_timestamps(output_dir)
 
     # -------------------- Stage 1: Scan PDFs -------------------- #
     print("🔍 Scanning PDFs...")
-    for pdf_path in progressbar(pdf_files, prefix="Scanning PDFs: ", size=40):
+    for pdf_path in progressbar(pdf_files, prefix="Scanning PDFs: ", size=10):
         try:
             with fitz.open(pdf_path) as doc:
                 if doc.page_count == 0:
@@ -249,11 +250,6 @@ def icbc_e_stamp_tool():
                 payment_text = first_page.get_text(clip=payment_plan_rect)
 
                 ts_match = timestamp_pattern.search(ts_text)
-                timestamp = (
-                    ts_match.group(1)
-                    if ts_match and ts_match.group(1) not in existing_timestamps
-                    else None
-                )
 
                 if payment_plan_pattern.search(payment_text):
                     continue
@@ -276,6 +272,23 @@ def icbc_e_stamp_tool():
                 agency_match = agency_number_pattern.search(full_text_first_page)
                 agency_number = (
                     agency_match.group(1).strip() if agency_match else "UNKNOWN"
+                )
+
+                # --- determine base name first
+                info_preview = {
+                    "transaction_timestamp": ts_match.group(1) if ts_match else "",
+                    "license_plate": license_plate,
+                    "insured_name": insured_name,
+                }
+                base_name = get_base_name(info_preview)
+
+                # --- check only matching PDFs in the root folder
+                existing_timestamps = find_existing_timestamps(base_name, output_dir)
+
+                timestamp = (
+                    ts_match.group(1)
+                    if ts_match and ts_match.group(1) not in existing_timestamps
+                    else None
                 )
 
                 customer_copy_pages = []
@@ -311,20 +324,27 @@ def icbc_e_stamp_tool():
     total_scanned = len(pdf_files)
 
     # -------------------- Stage 2: Process PDFs -------------------- #
-    print("\n✍️ Processing PDFs...")
+    print("✍️ Processing PDFs...")
     stamped_counter = 0
+
     for path, info in progressbar(
-        list(icbc_data.items()), prefix="Processing PDFs: ", size=40
+        list(reversed(list(icbc_data.items()))),
+        prefix="Processing PDFs: ",
+        size=10,
     ):
-        if not info["transaction_timestamp"]:
+        ts = info.get("transaction_timestamp")
+        if not ts:
             continue
-        ts = info["transaction_timestamp"]
-        if ts in find_existing_timestamps(output_dir):
+
+        base_name = get_base_name(info)
+        existing_timestamps = find_existing_timestamps(base_name, output_dir)
+        if ts in existing_timestamps:
             continue
 
         ts_dt = format_transaction_timestamp(ts)
 
         try:
+
             doc_batch = fitz.open(path)
             doc_customer = fitz.open(path)
 
