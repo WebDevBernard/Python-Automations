@@ -1,3 +1,20 @@
+# This file is part of ICBC E-Stamp Tool.
+#
+# ICBC E-Stamp Tool is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# This program uses PyMuPDF (MuPDF) under AGPLv3.
+
 import fitz
 import re
 from pathlib import Path
@@ -16,11 +33,9 @@ DEFAULTS = {
 
 # -------------------- Patterns and Rectangles -------------------- #
 timestamp_rect = (409.979, 63.8488, 576.0, 83.7455)
-payment_plan_rect = (425.402, 35.9664, 557.916, 48.3001)
 customer_copy_rect = (498.438, 751.953, 578.181, 769.977)
 
 timestamp_pattern = re.compile(r"Transaction Timestamp\s*(\d+)")
-payment_plan_pattern = re.compile(r"Payment Plan Agreement", re.IGNORECASE)
 license_plate_pattern = re.compile(
     r"Licence Plate Number\s*([A-Z0-9\- ]+)", re.IGNORECASE
 )
@@ -247,12 +262,8 @@ def icbc_e_stamp_tool():
                 first_page = doc[0]
                 full_text_first_page = "\n".join([first_page.get_text("text")])
                 ts_text = first_page.get_text(clip=timestamp_rect)
-                payment_text = first_page.get_text(clip=payment_plan_rect)
 
                 ts_match = timestamp_pattern.search(ts_text)
-
-                if payment_plan_pattern.search(payment_text):
-                    continue
 
                 license_plate_match = license_plate_pattern.search(full_text_first_page)
                 license_plate = (
@@ -274,7 +285,6 @@ def icbc_e_stamp_tool():
                     agency_match.group(1).strip() if agency_match else "UNKNOWN"
                 )
 
-                # --- determine base name first
                 info_preview = {
                     "transaction_timestamp": ts_match.group(1) if ts_match else "",
                     "license_plate": license_plate,
@@ -282,7 +292,6 @@ def icbc_e_stamp_tool():
                 }
                 base_name = get_base_name(info_preview)
 
-                # --- check only matching PDFs in the root folder
                 existing_timestamps = find_existing_timestamps(base_name, output_dir)
 
                 timestamp = (
@@ -336,6 +345,9 @@ def icbc_e_stamp_tool():
         if not ts:
             continue
 
+        if not info.get("validation_stamp_coords"):
+            continue
+
         base_name = get_base_name(info)
         existing_timestamps = find_existing_timestamps(base_name, output_dir)
         if ts in existing_timestamps:
@@ -365,6 +377,10 @@ def icbc_e_stamp_tool():
     print(f"\nTotal PDFs scanned: {total_scanned}")
     print(f"Total PDFs stamped: {stamped_counter}")
     print(f"✅ Total script execution time: {end_total - start_total:.2f} seconds")
+    print("\nExiting in ", end="")
+    for i in range(3, 0, -1):
+        print(f"{i} ", end="", flush=True)
+        time.sleep(1)
 
 
 if __name__ == "__main__":
