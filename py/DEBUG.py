@@ -89,12 +89,11 @@ def save_region_as_png(doc, page_num, coords, prefix="Region"):
 #   "extract_text"  → extract and save all text
 #   "search_text"   → search a pattern in the PDFs
 #   "extract_image" → highlight region and save image
-MODE = "search_text"
+MODE = "extract_text"
 
 SEARCH_PATTERN = r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))"  # Used when MODE == "search_text"
 
 for pdf_file in pdf_files:
-    print(search_text(pdf_file))
     with fitz.open(pdf_file) as doc:
         if MODE == "extract_text":
             text_data = get_text(doc)
@@ -104,8 +103,8 @@ for pdf_file in pdf_files:
 
         elif MODE == "extract_image":
             # Example coordinates — replace with your own
-            coords = (421.199, 466.423, 472.553, 471.723)
-            save_region_as_png(doc, page_num=2, coords=coords)
+            coords = (198.0, 761.04, 255.011, 769.977)
+            save_region_as_png(doc, page_num=1, coords=coords)
 
         else:
             print(f"⚠️ Unknown mode: {MODE}")

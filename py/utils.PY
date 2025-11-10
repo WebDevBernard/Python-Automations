@@ -1,5 +1,44 @@
-import pandas as pd
+import os
 from pathlib import Path
+
+
+def unique_file_name(path):
+    filename, extension = os.path.splitext(path)
+    counter = 1
+    while Path(path).is_file():
+        path = f"{filename} ({counter}){extension}"
+        counter += 1
+    return path
+
+
+def build_index(doc):
+
+    page_index = {}
+    text_to_location = []
+
+    for page_num, page in enumerate(doc):
+        blocks = []
+        for block_idx, block in enumerate(page.get_text("blocks")):
+            coords = tuple(block[:4])
+            text_lines = block[4].split("\n")
+            blocks.append({"words": text_lines, "coords": coords})
+
+            for line_idx, line in enumerate(text_lines):
+                text_to_location.append(
+                    {
+                        "normalized": line.lower(),
+                        "page": page_num,
+                        "block": block_idx,
+                        "line": line_idx,
+                        "text": line,
+                        "coords": coords,
+                    }
+                )
+
+        page_index[page_num] = blocks
+
+    return page_index, text_to_location
+
 
 CONFIG_PATH = Path("../config.xlsx")  # Default path, can be overridden
 
@@ -17,10 +56,11 @@ CONFIG_FIELDS = {
     "address_line_three": (21, 1, None),
     "risk_address_1": (23, 1, None),
     "number_of_pdfs": (27, 1, 0),
-    "drive_letter": (29, 1, None)
+    "drive_letter": (29, 1, None),
 }
 
 PRODUCER_RANGE = (33, 49)
+
 
 def safe_get(df, row, col, default=None, cast=None):
     try:
@@ -33,6 +73,7 @@ def safe_get(df, row, col, default=None, cast=None):
     except (IndexError, KeyError):
         return default
 
+
 def read_config(config_path=CONFIG_PATH):
     """
     Reads the Excel config file and returns a dictionary of config values.
@@ -43,7 +84,10 @@ def read_config(config_path=CONFIG_PATH):
         raise RuntimeError(f"Failed to read Excel file '{config_path}': {e}")
 
     # Single-value config items
-    data = {key: safe_get(df, row, col, default) for key, (row, col, default) in CONFIG_FIELDS.items()}
+    data = {
+        key: safe_get(df, row, col, default)
+        for key, (row, col, default) in CONFIG_FIELDS.items()
+    }
 
     # Multiple producer names
     start, end = PRODUCER_RANGE
@@ -51,6 +95,7 @@ def read_config(config_path=CONFIG_PATH):
     data["producer_names"] = dict(zip(producer_df[1], producer_df[2]))
 
     return data
+
 
 # Auto-load the config at import
 config = read_config()
