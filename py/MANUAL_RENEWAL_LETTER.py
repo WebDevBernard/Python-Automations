@@ -1,55 +1,78 @@
 from datetime import datetime
 from pathlib import Path
-import pandas as pd
-from docxtpl import DocxTemplate
-import logging
 
-from UTILITIES import unique_file_name
+from utils import write_to_new_docx
 
 DATE_FORMAT = "%B %d, %Y"
-TEMPLATE_FILE = Path(__file__).resolve().parent.parent / "assets" / "Renewal Letter New.docx"
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+TEMPLATE_FILE = Path.cwd() / "assets" / "Renewal Letter.docx"
 
 
-def write_to_new_docx(template_path: Path, data: dict, output_dir: Path | None = None) -> None:
-    template_path = Path(template_path)
-    if not template_path.exists():
-        raise FileNotFoundError(f"Template not found: {template_path}")
-    
-    doc = DocxTemplate(template_path)
-    doc.render(data)
+def map_config_for_renewal(config_data: dict) -> dict:
 
-    named_insured = str(data.get("named_insured", "Unnamed Client")).rstrip(".:").strip()
-    output_dir = output_dir or (Path.home() / "Desktop")
-    output_filename = output_dir / f"{named_insured} Renewal Letter.docx"
+    mapped = {
+        "task": config_data.get("event", "").strip(),
+        "broker_name": config_data.get("broker_name", "").strip(),
+        "on_behalf": config_data.get("on_behalf", "").strip(),
+        "risk_type_1": config_data.get("risk_type", "").strip(),
+        "named_insured": config_data.get("insured_name", "").strip(),
+        "insurer": config_data.get("insurer", "").strip(),
+        "policy_number": config_data.get("policy_number", "").strip(),
+        "effective_date": config_data.get("effective_date", "").strip(),
+        # Mailing address parts
+        "address_line_one": config_data.get("mailing_street", "").strip(),
+        "address_line_two": config_data.get("city_province", "").strip(),
+        "address_line_three": config_data.get("mailing_postal", "").strip(),
+        # Risk address (fallback logic happens inside manual_renewal_letter)
+        "risk_address_1": config_data.get("risk_address", "").strip(),
+    }
 
-    doc.save(unique_file_name(output_filename))
-    logging.info(f"Saved renewal letter for {named_insured} -> {output_filename}")
+    return mapped
 
 
 def manual_renewal_letter(config: dict) -> None:
     try:
-        df = pd.DataFrame([config])
-        df["today"] = datetime.today().strftime(DATE_FORMAT)
+        config = map_config_for_renewal(config)
+        # Add today's date
+        config["today"] = datetime.today().strftime(DATE_FORMAT)
 
+        # Build mailing address from address fields
         address_fields = ["address_line_one", "address_line_two", "address_line_three"]
-        df["mailing_address"] = (
-            df[address_fields]
-            .fillna("")
-            .agg(lambda x: ", ".join(filter(None, map(str.strip, x))), axis=1)
-        )
+        address_parts = [
+            config.get(field, "").strip()
+            for field in address_fields
+            if config.get(field, "").strip()
+        ]
+        config["mailing_address"] = ", ".join(address_parts)
 
-        df["risk_address_1"] = df["risk_address_1"].fillna(df["mailing_address"])
-        df["effective_date"] = pd.to_datetime(df["effective_date"], errors="coerce").dt.strftime(DATE_FORMAT)
+        # Use mailing address if risk_address_1 is empty
+        if not config.get("risk_address_1", "").strip():
+            config["risk_address_1"] = config["mailing_address"]
 
-        for row in df.to_dict(orient="records"):
-            write_to_new_docx(TEMPLATE_FILE, row)
+        # Parse and format effective_date
+        effective_date = config.get("effective_date")
+        if effective_date:
+            try:
+                # Try parsing as datetime object first
+                if isinstance(effective_date, datetime):
+                    config["effective_date"] = effective_date.strftime(DATE_FORMAT)
+                else:
+                    # Try parsing common string formats
+                    date_obj = datetime.strptime(str(effective_date), "%Y-%m-%d")
+                    config["effective_date"] = date_obj.strftime(DATE_FORMAT)
+            except ValueError:
+                try:
+                    # Try alternative format
+                    date_obj = datetime.strptime(str(effective_date), "%m/%d/%Y")
+                    config["effective_date"] = date_obj.strftime(DATE_FORMAT)
+                except ValueError:
+                    # Keep original if parsing fails
+                    print(f"Could not parse effective_date: {effective_date}")
 
-        logging.info("******** Manual Renewal Letter ran successfully ********")
+        write_to_new_docx(TEMPLATE_FILE, config)
+        print("******** Manual Renewal Letter ran successfully ********")
 
     except Exception as e:
-        logging.error(f"Manual Renewal Letter failed: {e}", exc_info=True)
+        print(f"Manual Renewal Letter failed: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
@@ -70,5 +93,4 @@ if __name__ == "__main__":
         "drive_letter": "C",
         "producer_names": {"Producer A": "producerA@email.com"},
     }
-
     manual_renewal_letter(test_config)

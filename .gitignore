@@ -22,3 +22,6 @@
 *.xlsm
 *.png
 /py/names.py
+/py/config.xlsx
+/py/~$config.xlsx
+/node_modules

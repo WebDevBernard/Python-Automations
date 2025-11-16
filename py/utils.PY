@@ -1,14 +1,98 @@
 import os
+import re
+import sys
+import time
+import shutil
+import openpyxl
 from pathlib import Path
+from docxtpl import DocxTemplate
+
+import fitz  # PyMuPDF
 
 
-def unique_file_name(path):
-    filename, extension = os.path.splitext(path)
+# -------------------- Progress Bar -------------------- #
+def progressbar(it, prefix="", size=60, out=sys.stdout):
+    count = len(it)
+    start = time.time()
+
+    def show(j):
+        x = int(size * j / count)
+        remaining = ((time.time() - start) / j) * (count - j) if j else 0
+        mins, sec = divmod(remaining, 60)
+        time_str = f"{int(mins):02}:{sec:03.1f}"
+        print(
+            f"{prefix}[{'█' * x}{'.' * (size - x)}] {j}/{count} Est wait {time_str}",
+            end="\r",
+            file=out,
+            flush=True,
+        )
+
+    if len(it) > 0:
+        show(0.1)
+        for i, item in enumerate(it):
+            yield item
+            show(i + 1)
+        print(flush=True, file=out)
+
+
+# -------------------- File Utilities -------------------- #
+def safe_filename(name: str) -> str:
+    name = re.sub(r'[\\/:*?"<>|]', "", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def unique_file_name(path: str) -> str:
+    directory = os.path.dirname(path)
+    filename, extension = os.path.splitext(os.path.basename(path))
+    filename = safe_filename(filename)
+
+    # Remove existing trailing (n)
+    base_name = re.sub(r"\s*\(\d+\)$", "", filename)
+
     counter = 1
-    while Path(path).is_file():
-        path = f"{filename} ({counter}){extension}"
+    new_path = os.path.join(directory, f"{base_name}{extension}")
+
+    while Path(new_path).is_file():
+        new_path = os.path.join(directory, f"{base_name} ({counter}){extension}")
         counter += 1
-    return path
+
+    return new_path
+
+
+def load_excel_mapping(
+    mapping_path, default_mappings, excel_mappings, sheet_name="Auto Tool"
+):
+
+    mapping_path = Path(mapping_path)
+    if not mapping_path.exists():
+        return default_mappings.copy()
+
+    wb = openpyxl.load_workbook(mapping_path, data_only=True)
+    if sheet_name not in wb.sheetnames:
+        raise ValueError(f"Sheet '{sheet_name}' not found in workbook")
+
+    ws = wb[sheet_name]
+    return {key: ws[cell].value for key, cell in excel_mappings.items()}
+
+
+def write_to_new_docx(
+    template_path: Path, data: dict, output_dir: Path | None = None
+) -> None:
+    template_path = Path(template_path)
+    if not template_path.exists():
+        raise FileNotFoundError(f"Template not found: {template_path}")
+
+    doc = DocxTemplate(template_path)
+    doc.render(data)
+
+    named_insured = (
+        str(data.get("named_insured", "Unnamed Client")).rstrip(".:").strip()
+    )
+    output_dir = output_dir or (Path.home() / "Desktop")
+    output_filename = output_dir / f"{named_insured} Renewal Letter.docx"
+    doc.save(unique_file_name(output_filename))
+    print(f"Saved renewal letter for {named_insured} -> {output_filename}")
 
 
 def build_index(doc):
@@ -62,40 +146,29 @@ CONFIG_FIELDS = {
 PRODUCER_RANGE = (33, 49)
 
 
-def safe_get(df, row, col, default=None, cast=None):
-    try:
-        value = df.iat[row, col]
-        if pd.isna(value) or value == "":
-            return default
-        if cast:
-            return cast(value)
-        return value
-    except (IndexError, KeyError):
-        return default
+# -------------------- Name Utilities -------------------- #
+def clean_name(name):
+    name = re.sub(r"[.:/\\*?\"<>|]", "", name)
+    name = re.sub(r"\s+", " ", name).strip().title()
+    return name
 
 
-def read_config(config_path=CONFIG_PATH):
-    """
-    Reads the Excel config file and returns a dictionary of config values.
-    """
-    try:
-        df = pd.read_excel(config_path, sheet_name=0, header=None)
-    except Exception as e:
-        raise RuntimeError(f"Failed to read Excel file '{config_path}': {e}")
+def format_name(name, lessor=False):
+    name = clean_name(name)
+    parts = name.split(" ")
 
-    # Single-value config items
-    data = {
-        key: safe_get(df, row, col, default)
-        for key, (row, col, default) in CONFIG_FIELDS.items()
-    }
+    if (len(name) == 27 and len(parts) >= 4) or re.search(
+        r"(Inc\.?|Ltd\.?|Corp\.?)$", name, re.IGNORECASE
+    ):
+        return name
 
-    # Multiple producer names
-    start, end = PRODUCER_RANGE
-    producer_df = df.iloc[start:end, 1:3].dropna(subset=[1])
-    data["producer_names"] = dict(zip(producer_df[1], producer_df[2]))
+    if lessor:
+        if len(parts) < 4 and len(name) < 27:
+            return " ".join(parts[1:] + [parts[0]])
 
-    return data
+        return " ".join(parts[:3])
 
-
-# Auto-load the config at import
-config = read_config()
+    # Non-lessor names
+    if len(parts) == 1:
+        return name
+    return " ".join(parts[1:] + [parts[0]])
