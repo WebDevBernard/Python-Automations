@@ -1,6 +1,23 @@
 import re
 import fitz
 
+# --------------- REGEX PATTERNS -----------------
+REGEX_PATTERNS = {
+    "postal_code": re.compile(
+        r"([ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z][ ]?\d[ABCEGHJ-NPRSTV-Z]\d)$"
+    ),
+    "dollar": re.compile(r"\$([\d,]+)"),
+    "date": re.compile(
+        r"\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}|(Jan(uary)?|Feb(ruary)?"
+        r"|Mar(ch)?|Apr(il)?|May|Jun(e)?|Jul(y)?|Aug(ust)?|Sep(tember)?|Oct(ober)?|Nov(ember)?"
+        r"|Dec(ember)?)\s+\d{1,2},\s+\d{4}"
+    ),
+    "address": re.compile(
+        r"(?!.*\bltd\.)((po box)|(unit)|\d+\s+)", flags=re.IGNORECASE
+    ),
+    "and": re.compile(r"&|\b(and)\b", flags=re.IGNORECASE),
+}
+
 DEFAULT_MAPPING = {
     "event": None,
     "broker_name": None,
@@ -31,231 +48,264 @@ EXCEL_CELL_MAPPING = {
     "risk_address": "B24",
 }
 
-RECTS = {
-    "policy_type": {
-        "Aviva": {"keyword": "Aviva", "rect": fitz.Rect(183.84, 728.4, 197.98, 734.4)},
-        "Family": {"keyword": "Agent", "rect": fitz.Rect(25.70, 36.37, 51.04, 45.45)},
-        "Intact": {"keyword": "Intact", "rect": fitz.Rect(36, 633.03, 576.26, 767.95)},
-        "Wawanesa": {
-            "keyword": "BROKER OFFICE",
-            "rect": fitz.Rect(36.0, 102.43, 353.27, 111.37),
-        },
-    },
+
+# --------------- HELPER FUNCTIONS -----------------
+def rect(x0, y0, x1, y1):
+    """Create a fitz.Rect with more readable syntax."""
+    return fitz.Rect(x0, y0, x1, y1)
+
+
+def offset(dx0, dy0, dx1, dy1):
+    """Create an offset rect (for pattern-based extraction)."""
+    return fitz.Rect(dx0, dy0, dx1, dy1)
+
+
+def pattern(regex_str, flags=re.IGNORECASE):
+    """Create a compiled regex pattern."""
+    return re.compile(regex_str, flags)
+
+
+# Field configuration helpers
+def absolute_rect_field(x0, y0, x1, y1):
+    """Field extracted from absolute coordinates (no pattern)."""
+    return {
+        "pattern": None,
+        "rect": rect(x0, y0, x1, y1),
+    }
+
+
+def pattern_only_field(regex_str, flags=re.IGNORECASE, return_all=False):
+    """Field extracted by pattern matching only."""
+    return {
+        "pattern": pattern(regex_str, flags),
+        "rect": None,
+        "return_all": return_all,
+    }
+
+
+def pattern_with_offset_field(
+    regex_str, dx0, dy0, dx1, dy1, flags=re.IGNORECASE, return_all=False
+):
+    """Field extracted by pattern + relative offset."""
+    return {
+        "pattern": pattern(regex_str, flags),
+        "rect": offset(dx0, dy0, dx1, dy1),
+        "return_all": return_all,
+    }
+
+
+# --------------- INSURER DETECTION -----------------
+POLICY_TYPE_DETECTION = {
     "Aviva": {
-        "name_and_address": {
-            "pattern": None,
-            "rect": fitz.Rect(80.4, 202.24, 250, 280),
-        },
-        "policy_number": {
-            "pattern": re.compile(r"Policy Number", re.IGNORECASE),
-            "rect": fitz.Rect(267.12, 10.16, -202.82, 9.16),
-        },
-        "effective_date": {
-            "pattern": re.compile(r"Policy Effective From:", re.IGNORECASE),
-            "rect": None,
-        },
-        "risk_address": {
-            "pattern": re.compile(r"Location\s", re.IGNORECASE),
-            "rect": None,
-        },
-        "form_type": {
-            "pattern": re.compile(r"Residence Locations:\s", re.IGNORECASE),
-            "rect": None,
-        },
-        "risk_type": {
-            "pattern": re.compile(r"Residence Locations:\s", re.IGNORECASE),
-            "rect": None,
-        },
-        "number_of_families": {
-            "pattern": re.compile(r"Extended Liability", re.IGNORECASE),
-            "rect": None,
-        },
-        "earthquake_coverage": {
-            "pattern": re.compile(r"Earthquake", re.IGNORECASE),
-            "rect": None,
-        },
-        "overland_water": {
-            "pattern": re.compile(r"Overland Water", re.IGNORECASE),
-            "rect": None,
-        },
-        "condo_deductible": {
-            "pattern": re.compile(r"Condominium Corporation Deductible", re.IGNORECASE),
-            "rect": None,
-        },
-        "service_line": {
-            "pattern": re.compile(r"Service Line Coverage", re.IGNORECASE),
-            "rect": None,
-        },
-        "premium_amount": {
-            "pattern": re.compile(r"TOTAL", re.IGNORECASE),
-            "rect": None,
-        },
+        "keyword": "Aviva",
+        "rect": rect(
+            183.83999633789062,
+            712.8900146484375,
+            197.9759979248047,
+            734.4000244140625,
+        ),
     },
     "Family": {
-        "name_and_address": {
-            "pattern": None,
-            "rect": fitz.Rect(25.34, 153.38, 150, 228.67),
-        },
-        "policy_number": {
-            "pattern": re.compile(r"POLICY NUMBER", re.IGNORECASE),
-            "rect": fitz.Rect(-1.08, 11.03, 8.86, 25.99),
-        },
-        "effective_date": {
-            "pattern": re.compile(r"EFFECTIVE DATE", re.IGNORECASE),
-            "rect": fitz.Rect(-1.01, 20.17, 24.57, 11.45),
-        },
-        "risk_address": {
-            "pattern": re.compile(r"LOCATION OF INSURED PROPERTY:", re.IGNORECASE),
-            "rect": None,
-        },
-        "form_type": {
-            "pattern": re.compile(r"All Perils:", re.IGNORECASE),
-            "rect": None,
-        },
-        "risk_type": {
-            "pattern": re.compile(r"POLICY TYPE", re.IGNORECASE),
-            "rect": fitz.Rect(-0.94, 11.10, 7.76, 11.45),
-        },
-        "number_of_families": {
-            "pattern": re.compile(r"RENTAL SUITES", re.IGNORECASE),
-            "rect": None,
-        },
-        "earthquake_coverage": {
-            "pattern": re.compile(r"EARTHQUAKE PROPERTY LIMITS", re.IGNORECASE),
-            "rect": fitz.Rect(112.40, 12.74, 42, 12.37),
-        },
-        "overland_water": {
-            "pattern": re.compile(r"Overland Water", re.IGNORECASE),
-            "rect": None,
-        },
-        "condo_deductible": {
-            "pattern": re.compile(r"Deductible Coverage:", re.IGNORECASE),
-            "rect": None,
-        },
-        "service_line": {
-            "pattern": re.compile(r"Service Lines", re.IGNORECASE),
-            "rect": None,
-        },
-        "premium_amount": {
-            "pattern": re.compile(r"RETURN THIS PORTION WITH PAYMENT", re.IGNORECASE),
-            "rect": fitz.Rect(5.59, -22.79, -116.08, -22.20),
-        },
+        "keyword": "Agent",
+        "rect": rect(25.70, 36.37, 51.04, 45.45),
     },
     "Intact": {
-        "name_and_address": {
-            "pattern": None,
-            "rect": fitz.Rect(49.65, 152.65, 250, 212.49),
-        },
-        "policy_number": {
-            "pattern": re.compile(r"Policy Number", re.IGNORECASE),
-            "rect": fitz.Rect(267.12, 10.16, -202.82, 9.16),
-        },
-        "effective_date": {
-            "pattern": re.compile(r"Policy Number", re.IGNORECASE),
-            "rect": None,
-        },
-        "risk_address": {
-            "pattern": re.compile(r"Property Coverage", re.IGNORECASE),
-            "rect": fitz.Rect(0.0, 16.9, 0.0, 0.0),
-        },
-        "form_type": {
-            "pattern": re.compile(r"Property Coverage", re.IGNORECASE),
-            "rect": fitz.Rect(110.65, 0.0, 0, -10.03),
-        },
-        "risk_type": {
-            "pattern": re.compile(r"Property Coverage", re.IGNORECASE),
-            "rect": fitz.Rect(110.65, 0.0, 0, -10.03),
-        },
-        "number_of_families": {
-            "pattern": re.compile(r"Families", re.IGNORECASE),
-            "rect": fitz.Rect(0, 18.7, 0, 18.75),
-        },
-        "earthquake_coverage": {
-            "pattern": re.compile(r"Earthquake Damage Assumption", re.IGNORECASE),
-            "rect": fitz.Rect(46.94, 11.17, 35, 12.27),
-        },
-        "overland_water": {
-            "pattern": re.compile(r"Enhanced Water Damage", re.IGNORECASE),
-            "rect": None,
-        },
-        "condo_deductible": {
-            "pattern": re.compile(r"Deductible Coverage:", re.IGNORECASE),
-            "rect": None,
-        },
-        "condo_earthquake_deductible": {
-            "pattern": re.compile(r"Additional Loss Assessment", re.IGNORECASE),
-            "rect": None,
-        },
-        "service_line": {
-            "pattern": re.compile(r"Water and Sewer Lines", re.IGNORECASE),
-            "rect": None,
-        },
-        "premium_amount": {
-            "pattern": re.compile(r"Total for Policy", re.IGNORECASE),
-            "rect": None,
-        },
+        "keyword": "Intact",
+        "rect": rect(36, 633.03, 576.26, 767.95),
     },
     "Wawanesa": {
-        "name_and_address": {
-            "pattern": None,
-            "rect": fitz.Rect(36.0, 122.43, 200, 180),
-        },
-        "policy_number": {
-            "pattern": re.compile(r"NAMED INSURED AND ADDRESS", re.IGNORECASE),
-            "rect": None,
-        },
-        "effective_date": {
-            "pattern": re.compile(r"NAMED INSURED AND ADDRESS", re.IGNORECASE),
-            "rect": None,
-        },
-        "risk_address": {
-            "pattern": re.compile(r"Location Description", re.IGNORECASE),
-            "rect": None,
-        },
-        "form_type": {
-            "pattern": re.compile(
-                r"subject to all conditions of the policy.", re.IGNORECASE
-            ),
-            "rect": None,
-        },
-        "risk_type": {"pattern": re.compile(r"Risk Type", re.IGNORECASE), "rect": None},
-        "number_of_families": {
-            "pattern": re.compile(r"Number of Families", re.IGNORECASE),
-            "rect": None,
-        },
-        "number_of_units": {
-            "pattern": re.compile(r"Number of Units", re.IGNORECASE),
-            "rect": None,
-        },
-        "earthquake_coverage": {
-            "pattern": re.compile(r"Earthquake Coverage", re.IGNORECASE),
-            "rect": None,
-        },
-        "overland_water": {
-            "pattern": re.compile(r"Overland Water", re.IGNORECASE),
-            "rect": None,
-        },
-        "condo_deductible": {
-            "pattern": re.compile(r"Condominium Deductible Coverage-", re.IGNORECASE),
-            "rect": None,
-        },
-        "condo_earthquake_deductible": {
-            "pattern": re.compile(
-                r"Condominium Deductible Coverage Earthquake", re.IGNORECASE
-            ),
-            "rect": fitz.Rect(350.90, 0.0, 95.43, -9.60),
-        },
-        "tenant_vandalism": {
-            "pattern": re.compile(r"Vandalism by Tenant Coverage -", re.IGNORECASE),
-            "rect": None,
-        },
-        "service_line": {
-            "pattern": re.compile(r"Service Line Coverage", re.IGNORECASE),
-            "rect": None,
-        },
-        "premium_amount": {
-            "pattern": re.compile(r"Total Policy Premium", re.IGNORECASE),
-            "rect": None,
-        },
+        "keyword": "BROKER OFFICE",
+        "rect": rect(36.0, 102.43, 353.27, 111.37),
     },
+}
+
+
+# --------------- FIELD MAPPINGS BY INSURER -----------------
+
+AVIVA_FIELDS = {
+    "name_and_address": absolute_rect_field(80.4, 202.24, 250, 280),
+    "policy_number": pattern_with_offset_field(
+        r"Policy Number", dx0=267.12, dy0=10.16, dx1=-202.82, dy1=9.16
+    ),
+    "effective_date": pattern_only_field(r"Policy Effective From:"),
+    "risk_address": pattern_only_field(
+        r"Location [123]\s+(?!deductible|discounts)(.*)", return_all=True
+    ),  # Can have multiple
+    "form_type": pattern_with_offset_field(
+        r"Location [123]\s+(?!deductible|discounts)(.*)",
+        dx0=245.52,
+        dy0=0.80,
+        dx1=350.89,
+        dy1=-10.00,
+        return_all=True,
+    ),  # Can have multiple
+    "risk_type": pattern_with_offset_field(
+        r"Location [123]\s+(?!deductible|discounts)(.*)",
+        dx0=245.52,
+        dy0=0.80,
+        dx1=350.89,
+        dy1=-10.00,
+        return_all=True,
+    ),  # Can have multiple
+    "number_of_families": pattern_only_field(r"00([12])\s+Additional Family"),
+    "earthquake_coverage": pattern_only_field(
+        r"Earthquake (?:- \d+(?:\.\d+)?% Of Personal Property - |Endorsement )(\d+(?:\.\d+)?%)"
+    ),
+    "overland_water": pattern_only_field(
+        r"Overland Water - Deductible (\$[\d,]+(?:\.\d{2})?)"
+    ),
+    "condo_deductible": pattern_only_field(
+        r"Condominium Corporation Deductible - (\$[\d,]+(?:\.\d{2})?)"
+    ),
+    "service_line": pattern_only_field(
+        r"Service Line Coverage Endorsement - (\$[\d,]+(?:\.\d{2})?) Limit"
+    ),
+    "premium_amount": pattern_only_field(
+        r"Total Policy Premium.*?(\$[\d,]+(?:\.\d{2})?)"
+    ),
+}
+
+
+FAMILY_FIELDS = {
+    "name_and_address": absolute_rect_field(25.34, 153.38, 150, 228.67),
+    "policy_number": pattern_with_offset_field(
+        r"POLICY NUMBER", dx0=-0.94, dy0=11.03, dx1=-5.61, dy1=10.80
+    ),
+    "effective_date": pattern_with_offset_field(
+        r"EFFECTIVE DATE", dx0=-1.01, dy0=20.17, dx1=24.57, dy1=11.45
+    ),
+    "risk_address": pattern_only_field(
+        r"(?i)LOCATION\s+OF\s+INSURED\s+PROPERTY:\s*(.+)"
+    ),
+    "form_type": pattern_only_field(r"(?i)All\s+Perils:\s*(Included)"),
+    "risk_type": pattern_with_offset_field(
+        r"POLICY TYPE", dx0=-0.94, dy0=11.10, dx1=7.76, dy1=11.45
+    ),
+    "number_of_families": pattern_only_field(
+        r"(?i)OPERATION\W+OF\W+([12])\W*RENTAL\W*SUITES?"
+    ),
+    "earthquake_coverage": pattern_with_offset_field(
+        r"EARTHQUAKE PROPERTY LIMITS", dx0=113.5, dy0=12.74, dx1=42, dy1=12.37
+    ),
+    "overland_water": pattern_only_field(r"Overland Water"),
+    "condo_deductible": pattern_only_field(
+        r"(?i)Deductible\W+Coverage\W*:\W*(\$[\d,]+)\*?"
+    ),
+    "service_line": pattern_only_field(r"Service Lines"),
+    "premium_amount": pattern_with_offset_field(
+        r"RETURN THIS PORTION WITH PAYMENT",
+        dx0=5.59,
+        dy0=-22.79,
+        dx1=-116.08,
+        dy1=-22.20,
+    ),
+}
+
+
+INTACT_FIELDS = {
+    "name_and_address": absolute_rect_field(49.65, 152.65, 250, 212.49),
+    "policy_number": pattern_only_field(r"Policy Number:?\s+([A-Z0-9]+)"),
+    "effective_date": pattern_with_offset_field(
+        r"Policy Period At 12:01 A.M. local time at the postal address of the Named Insured",
+        dx0=134.80,
+        dy0=12.71,
+        dx1=-81.36,
+        dy1=15.44,
+    ),
+    "risk_address": pattern_only_field(
+        r"Property Coverage \([^)]+\)\s+(.*)", return_all=True
+    ),  # Can have multiple
+    "form_type": pattern_only_field(
+        r"Property Coverage \(([^)]+)\)", return_all=True
+    ),  # Can have multiple
+    "risk_type": pattern_only_field(
+        r"Property Coverage \(([^)]+)\)", return_all=True
+    ),  # Can have multiple
+    "number_of_families": pattern_with_offset_field(
+        r"Families", dx0=0, dy0=18.7, dx1=0, dy1=18.75, return_all=True
+    ),
+    "earthquake_coverage": pattern_only_field(
+        r"Earthquake\s+Damage\s+Assumption\s+End't:\s*(\d+%)\s*Ded"
+    ),
+    "overland_water": pattern_only_field(r"Overland Water\s+([\d,]+(?:\.\d{2})?)"),
+    "condo_deductible": pattern_only_field(r"(\$[\d,]+)\s+Condo\s+Protection"),
+    "condo_earthquake_deductible": pattern_only_field(r"Additional Loss Assessment"),
+    "service_line": pattern_only_field(r"Water and Sewer Lines\s+([\d,]+(?:\.\d{2})?)"),
+    "premium_amount": pattern_only_field(r"Total\s+for\s+Policy\s+([\d,]+)"),
+}
+
+
+WAWANESA_FIELDS = {
+    "name_and_address": absolute_rect_field(36.0, 122.43, 200, 180),
+    "policy_number": pattern_only_field(r"^Policy\s+Number\s+(\d{8})\s*$"),
+    "effective_date": pattern_only_field(r"Policy Period From (.+?) to"),
+    "risk_address": pattern_with_offset_field(
+        r"Location Description Risk Type Residence Type",
+        dx0=-119.74,
+        dy0=13.78,
+        dx1=-165.01,
+        dy1=31.85,
+        return_all=True,  # Can have multiple locations
+    ),
+    "form_type": pattern_with_offset_field(
+        r"Section I  -  Property Coverage",
+        dx0=0.00,
+        dy0=-16.80,
+        dx1=414.45,
+        dy1=-5.35,
+        return_all=True,  # Can have multiple locations
+    ),
+    "risk_type": pattern_with_offset_field(
+        r"Location Description Risk Type Residence Type",
+        dx0=199.22,
+        dy0=13.78,
+        dx1=-75.01,
+        dy1=31.85,
+        return_all=True,  # Can have multiple locations
+    ),
+    "number_of_families": pattern_only_field(
+        r"Number of Families\s+(\d+)", return_all=True
+    ),  # Can have multiple
+    "number_of_units": pattern_only_field(
+        r"Number of Units\s+(\d+)", return_all=True
+    ),  # Can have multiple
+    "earthquake_coverage": pattern_only_field(r"Earthquake Coverage"),
+    "overland_water": pattern_only_field(r"Water Defence - Overland Water Coverage -"),
+    "condo_deductible": pattern_with_offset_field(
+        r"Condominium Deductible Coverage-",
+        dx0=357.90,
+        dy0=0.13,
+        dx1=107.95,
+        dy1=-9.60,
+    ),
+    "condo_earthquake_deductible": pattern_with_offset_field(
+        r"Condominium Deductible Coverage Earthquake-",
+        dx0=357.90,
+        dy0=0.13,
+        dx1=107.95,
+        dy1=-9.60,
+    ),
+    "tenant_vandalism": pattern_only_field(
+        r"Vandalism by Tenant Coverage -", return_all=True
+    ),
+    "service_line": pattern_only_field(r"Service Line Coverage -", return_all=True),
+    "premium_amount": pattern_only_field(
+        r"Total Policy Premium\s*(\$\s*[\d,]+\.\d{2})"
+    ),
+    "sewer_back_up_increased_deductible": pattern_only_field(
+        r"Limited Sewer Backup coverage deductible has been increased to\s*(\$\s*[\d,]+)"
+    ),
+    "overland_water_increased_deductible": pattern_only_field(
+        r"Overland Water Coverage deductible has increased\s*to\s*(\$\s*[\d,]+)"
+    ),
+}
+
+
+# --------------- MAIN CONFIGURATION -----------------
+RECTS = {
+    "policy_type": POLICY_TYPE_DETECTION,
+    "Aviva": AVIVA_FIELDS,
+    "Family": FAMILY_FIELDS,
+    "Intact": INTACT_FIELDS,
+    "Wawanesa": WAWANESA_FIELDS,
 }

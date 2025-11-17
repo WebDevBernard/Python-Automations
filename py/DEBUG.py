@@ -7,16 +7,22 @@ from tabulate import tabulate
 CONFIG = {
     # Feature toggles
     "extract_text": True,
+    "extract_tables": False,
     "search_text": False,
-    "extract_image": False,
+    "extract_image": True,
     # Directories
     "input_dir": Path.home() / "Downloads",
     "output_dir": Path.home() / "Desktop",
     # Search settings
     "search_pattern": r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))",
     # Image extraction defaults
-    "page_num": 1,
-    "coords": (198.0, 752.729736328125, 255.011, 769.977),
+    "page_num": 7,
+    "coords": (
+        352,
+        54.4100227355957,
+        548.9254150390625,
+        64.04902648925781,
+    ),
     "image_prefix": "img",
 }
 
@@ -34,6 +40,51 @@ def get_text(doc, structured=True):
             blocks.append({"words": text_lines, "coords": coords})
         pages_dict[page_num] = blocks
     return pages_dict
+
+
+def get_tables(doc):
+    """Extracts tables from all pages using PyMuPDF's table detection."""
+    tables_dict = {}
+    for page_num, page in enumerate(doc, start=1):
+        tables = []
+        page_tables = page.find_tables()
+
+        for table_index, table in enumerate(page_tables.tables):
+            rows = table.extract()
+            # Filter out empty rows
+            rows = [row for row in rows if row and any(cell for cell in row)]
+
+            # Get cell rectangles safely
+            cells_rects = []
+            try:
+                for row_idx in range(table.row_count):
+                    row_rects = []
+                    for col_idx in range(table.col_count):
+                        try:
+                            cell_rect = table.cells[row_idx * table.col_count + col_idx]
+                            row_rects.append(cell_rect)
+                        except (IndexError, TypeError):
+                            row_rects.append(None)
+                    cells_rects.append(row_rects)
+            except Exception as e:
+                print(
+                    f"Warning: Could not extract cell rectangles for table {table_index}: {e}"
+                )
+                cells_rects = []
+
+            table_data = {
+                "table_index": table_index,
+                "bbox": table.bbox,
+                "rows": rows,
+                "cells_rects": cells_rects,
+                "row_count": len(rows),
+                "col_count": len(rows[0]) if rows else 0,
+            }
+            tables.append(table_data)
+
+        tables_dict[page_num] = tables
+
+    return tables_dict
 
 
 def search_text(doc, pattern):
@@ -59,17 +110,65 @@ def write_txt_to_file(file_path, field_dict):
             ]
             if not table_data:
                 file.write("(No text found on this page)\n\n")
-                continue  # Skip tabulate call for empty pages
+                continue
 
             file.write(
                 tabulate(
                     table_data,
                     headers=["Keywords", "Coordinates"],
                     tablefmt="grid",
-                    maxcolwidths=[50, None],
+                    maxcolwidths=[None, None],
                 )
             )
             file.write("\n\n")
+
+
+def write_tables_to_file(file_path, tables_dict):
+    """Save extracted tables as formatted output."""
+    with open(file_path, "w", encoding="utf-8") as file:
+        for page, tables in tables_dict.items():
+            file.write(f"Page: {page}\n")
+
+            if not tables:
+                file.write("(No tables found on this page)\n\n")
+                continue
+
+            for table_data in tables:
+                file.write(f"\n--- Table {table_data['table_index'] + 1} ---\n")
+                file.write(
+                    f"Rows: {table_data['row_count']}, Columns: {table_data['col_count']}\n"
+                )
+                file.write(f"Bounding Box: {table_data['bbox']}\n\n")
+
+                # Write table content
+                if table_data["rows"] and len(table_data["rows"]) > 0:
+                    try:
+                        file.write(
+                            tabulate(
+                                table_data["rows"],
+                                headers="firstrow",
+                                tablefmt="grid",
+                                maxcolwidths=30,
+                            )
+                        )
+                        file.write("\n\n")
+                    except Exception as e:
+                        file.write(f"(Error formatting table: {e})\n")
+                        file.write(f"Raw data: {table_data['rows']}\n\n")
+                else:
+                    file.write("(Empty table)\n\n")
+
+                # Write cell rectangles
+                if table_data["cells_rects"]:
+                    file.write("Cell Rectangles:\n")
+                    for row_idx, row_rects in enumerate(table_data["cells_rects"]):
+                        file.write(f"  Row {row_idx}:\n")
+                        for col_idx, rect in enumerate(row_rects):
+                            if rect:
+                                file.write(f"    Col {col_idx}: {rect}\n")
+                            else:
+                                file.write(f"    Col {col_idx}: (unavailable)\n")
+                    file.write("\n")
 
 
 def save_region_as_png(
@@ -108,7 +207,14 @@ def main(config):
                 write_txt_to_file(output_file, text_data)
                 print(f"✅ Saved extracted text to: {output_file}")
 
-            # 2️⃣ Search text
+            # 2️⃣ Extract tables
+            if config["extract_tables"]:
+                table_data = get_tables(doc)
+                output_file = output_dir / f"{pdf_file.stem}_tables.txt"
+                write_tables_to_file(output_file, table_data)
+                print(f"📊 Saved extracted tables to: {output_file}")
+
+            # 3️⃣ Search text
             if config["search_text"]:
                 name = search_text(doc, config["search_pattern"])
                 if name:
@@ -116,7 +222,7 @@ def main(config):
                 else:
                     print("❌ No match found.")
 
-            # 3️⃣ Extract image
+            # 4️⃣ Extract image
             if config["extract_image"]:
                 save_region_as_png(
                     doc,
