@@ -10,20 +10,34 @@ CONFIG = {
     "extract_tables": False,
     "search_text": False,
     "extract_image": True,
+    "calculate_offsets": True,  # NEW: Toggle for offset calculations
     # Directories
     "input_dir": Path.home() / "Downloads",
     "output_dir": Path.home() / "Desktop",
     # Search settings
     "search_pattern": r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))",
     # Image extraction defaults
-    "page_num": 7,
+    "page_num": 13,
     "coords": (
-        352,
-        54.4100227355957,
-        548.9254150390625,
-        64.04902648925781,
+        86.1500015258789,
+        526.6749877929688,
+        90,
+        536.2930297851562,
     ),
     "image_prefix": "img",
+    # Offset calculation settings
+    "pattern_rect": (
+        86.1500015258789,
+        507.9750061035156,
+        118.82599639892578,
+        525.7430419921875,
+    ),
+    "target_rect": (
+        86.1500015258789,
+        526.6749877929688,
+        90,
+        536.2930297851562,
+    ),
 }
 
 
@@ -186,11 +200,85 @@ def save_region_as_png(
     print(f"🖼️  Saved highlighted image to: {output_file}")
 
 
+def offset_below(pattern_rect, target_rect):
+    """
+    Calculate offset for target rect below pattern rect.
+    Prints offset values to copy into constants.
+    Args:
+        pattern_rect: tuple (x0, y0, x1, y1) - where pattern is found
+        target_rect: tuple (x0, y0, x1, y1) - where you want to extract
+    """
+    p_x0, p_y0, p_x1, p_y1 = pattern_rect
+    t_x0, t_y0, t_x1, t_y1 = target_rect
+    dx0 = t_x0 - p_x0
+    dy0 = t_y0 - p_y0  # distance from pattern's BOTTOM edge
+    dx1 = t_x1 - p_x1
+    dy1 = t_y1 - p_y1  # distance from pattern's BOTTOM edge
+    print(f"  dx0={dx0:.2f}, dy0={dy0:.2f}, dx1={dx1:.2f}, dy1={dy1:.2f}")
+
+
+def offset_right(pattern_rect, target_rect):
+    """
+    Calculate offset for target rect to the right of pattern rect.
+    Prints offset values to copy into constants.
+    Args:
+        pattern_rect: tuple (x0, y0, x1, y1) - where pattern is found
+        target_rect: tuple (x0, y0, x1, y1) - where you want to extract
+    """
+    p_x0, p_y0, p_x1, p_y1 = pattern_rect
+    t_x0, t_y0, t_x1, t_y1 = target_rect
+    # Calculate from pattern's LEFT edge (x0) to work with extract_with_pattern_and_offset
+    dx0 = t_x0 - p_x0  # distance from pattern's LEFT edge to target's left
+    dy0 = t_y0 - p_y0
+    dx1 = t_x1 - p_x1  # keeps the width calculation correct
+    dy1 = t_y1 - p_y1
+    print(f"  dx0={dx0:.2f}, dy0={dy0:.2f}, dx1={dx1:.2f}, dy1={dy1:.2f}")
+
+
+def offset_above(pattern_rect, target_rect):
+    """
+    Calculate offset for target rect above pattern rect.
+    Prints offset values to copy into constants.
+    Args:
+        pattern_rect: tuple (x0, y0, x1, y1) - where pattern is found
+        target_rect: tuple (x0, y0, x1, y1) - where you want to extract
+    """
+    p_x0, p_y0, p_x1, p_y1 = pattern_rect
+    t_x0, t_y0, t_x1, t_y1 = target_rect
+    dx0 = t_x0 - p_x0
+    dy0 = t_y0 - p_y0  # distance from pattern's TOP edge
+    dx1 = t_x1 - p_x1
+    dy1 = t_y1 - p_y0  # distance from pattern's TOP edge
+    print(f"  dx0={dx0:.2f}, dy0={dy0:.2f}, dx1={dx1:.2f}, dy1={dy1:.2f}")
+
+
+def calculate_all_offsets(pattern_rect, target_rect):
+    """Calculate and display all offset directions."""
+    print("\n📐 Offset Calculations:")
+    print(f"Pattern rect: {pattern_rect}")
+    print(f"Target rect:  {target_rect}\n")
+
+    print("Above:")
+    offset_above(pattern_rect, target_rect)
+
+    print("\nBelow:")
+    offset_below(pattern_rect, target_rect)
+
+    print("\nRight:")
+    offset_right(pattern_rect, target_rect)
+    print()
+
+
 # === Main Execution ===
 def main(config):
     input_dir = config["input_dir"]
     output_dir = config["output_dir"]
     pdf_files = list(input_dir.glob("*.pdf"))
+
+    # 5️⃣ Calculate offsets (runs once, no PDF needed)
+    if config["calculate_offsets"]:
+        calculate_all_offsets(config["pattern_rect"], config["target_rect"])
+        return  # Exit after calculation if no other features enabled
 
     if not pdf_files:
         print("⚠️ No PDF files found in input directory.")

@@ -110,8 +110,10 @@ POLICY_TYPE_DETECTION = {
         "rect": rect(25.70, 36.37, 51.04, 45.45),
     },
     "Intact": {
-        "keyword": "Intact",
-        "rect": rect(36, 633.03, 576.26, 767.95),
+        "keyword": "Version",
+        "rect": rect(
+            39.599998474121094, 733.7724609375, 334.03118896484375, 744.352294921875
+        ),
     },
     "Wawanesa": {
         "keyword": "BROKER OFFICE",
@@ -127,7 +129,9 @@ AVIVA_FIELDS = {
     "policy_number": pattern_with_offset_field(
         r"Policy Number", dx0=267.12, dy0=10.16, dx1=-202.82, dy1=9.16
     ),
-    "effective_date": pattern_only_field(r"Policy Effective From:"),
+    "effective_date": pattern_only_field(
+        r"Policy Effective From:\s*([A-Z][a-z]+\s+\d{1,2},\s+\d{4})"
+    ),
     "risk_address": pattern_only_field(
         r"Location [123]\s+(?!deductible|discounts)(.*)", return_all=True
     ),  # Can have multiple
@@ -222,7 +226,7 @@ INTACT_FIELDS = {
         r"Property Coverage \(([^)]+)\)", return_all=True
     ),  # Can have multiple
     "number_of_families": pattern_with_offset_field(
-        r"Families", dx0=0, dy0=18.7, dx1=0, dy1=18.75, return_all=True
+        r"Number of Families", dx0=0, dy0=18.7, dx1=0, dy1=18.75, return_all=True
     ),
     "earthquake_coverage": pattern_only_field(
         r"Earthquake\s+Damage\s+Assumption\s+End't:\s*(\d+%)\s*Ded"
@@ -237,6 +241,9 @@ INTACT_FIELDS = {
 
 WAWANESA_FIELDS = {
     "name_and_address": absolute_rect_field(36.0, 122.43, 200, 180),
+    "wawanesa_statement": pattern_only_field(
+        "PERSONAL PROPERTY POLICY STATEMENT OF ACCOUNT"
+    ),
     "policy_number": pattern_only_field(r"^Policy\s+Number\s+(\d{8})\s*$"),
     "effective_date": pattern_only_field(r"Policy Period From (.+?) to"),
     "risk_address": pattern_with_offset_field(

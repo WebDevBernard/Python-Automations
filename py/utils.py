@@ -2,12 +2,9 @@ import os
 import re
 import sys
 import time
-import shutil
 import openpyxl
 from pathlib import Path
 from docxtpl import DocxTemplate
-
-import fitz  # PyMuPDF
 
 
 # -------------------- Progress Bar -------------------- #
@@ -61,12 +58,26 @@ def unique_file_name(path: str) -> str:
 
 
 def load_excel_mapping(
-    mapping_path, default_mappings, excel_mappings, sheet_name="Auto Tool"
+    mapping_path, default_mappings, excel_mappings, sheet_name="File Completion Tool"
 ):
 
     mapping_path = Path(mapping_path)
     if not mapping_path.exists():
-        return default_mappings.copy()
+        print(
+            f"Config file not found: {mapping_path.absolute()}"
+        )
+        print(
+            "Please create 'config.xlsx' in the current directory or visit"
+        )
+        print(
+            "https://github.com/WebDevBernard/Python-Automations to download the template."
+        )
+        print("\nExiting in ", end="")
+        for i in range(10, 0, -1):
+            print(f"{i} ", end="", flush=True)
+            time.sleep(1)
+        print()
+        raise FileNotFoundError(f"Config file not found: {mapping_path}")
 
     wb = openpyxl.load_workbook(mapping_path, data_only=True)
     if sheet_name not in wb.sheetnames:
@@ -77,22 +88,70 @@ def load_excel_mapping(
 
 
 def write_to_new_docx(
-    template_path: Path, data: dict, output_dir: Path | None = None
-) -> None:
-    template_path = Path(template_path)
-    if not template_path.exists():
-        raise FileNotFoundError(f"Template not found: {template_path}")
+    template_path: Path | None = None, data: dict = None, output_dir: Path | None = None
+) -> bool:
+    try:
+        # Auto-detect template if not provided
+        if template_path is None:
+            assets_dir = Path.cwd() / "assets"
 
-    doc = DocxTemplate(template_path)
-    doc.render(data)
+            if not assets_dir.exists():
+                print(
+                    "Assets folder not found. Please create an 'assets' folder with the template."
+                )
+                print("\nExiting in ", end="")
+                for i in range(10, 0, -1):
+                    print(f"{i} ", end="", flush=True)
+                    time.sleep(1)
+                print()
+                return False
 
-    named_insured = (
-        str(data.get("named_insured", "Unnamed Client")).rstrip(".:").strip()
-    )
-    output_dir = output_dir or (Path.home() / "Desktop")
-    output_filename = output_dir / f"{named_insured} Renewal Letter.docx"
-    doc.save(unique_file_name(output_filename))
-    print(f"Saved renewal letter for {named_insured} -> {output_filename}")
+            docx_files = list(assets_dir.glob("*.docx"))
+
+            if not docx_files:
+                print(
+                    "Template not found. Visit https://github.com/WebDevBernard/Python-Automations to download the template."
+                )
+                print("\nExiting in ", end="")
+                for i in range(10, 0, -1):
+                    print(f"{i} ", end="", flush=True)
+                    time.sleep(1)
+                print()
+                return False
+
+            template_path = docx_files[0]
+        else:
+            template_path = Path(template_path)
+            if not template_path.exists():
+                print(
+                    "Template not found. Visit https://github.com/WebDevBernard/Python-Automations to download the template."
+                )
+                print("\nExiting in ", end="")
+                for i in range(10, 0, -1):
+                    print(f"{i} ", end="", flush=True)
+                    time.sleep(1)
+                print()
+                return False
+
+        doc = DocxTemplate(template_path)
+        doc.render(data)
+
+        named_insured = (
+            str(data.get("named_insured", "Unnamed Client")).rstrip(".:").strip()
+        )
+        output_dir = output_dir or (Path.home() / "Desktop")
+        output_filename = output_dir / f"{named_insured} Renewal Letter.docx"
+        doc.save(unique_file_name(output_filename))
+        return True
+
+    except Exception as e:
+        print(f"Error creating document: {e}")
+        print("\nExiting in ", end="")
+        for i in range(10, 0, -1):
+            print(f"{i} ", end="", flush=True)
+            time.sleep(1)
+        print()
+        return False
 
 
 def build_index(doc):
@@ -144,31 +203,3 @@ CONFIG_FIELDS = {
 }
 
 PRODUCER_RANGE = (33, 49)
-
-
-# -------------------- Name Utilities -------------------- #
-def clean_name(name):
-    name = re.sub(r"[.:/\\*?\"<>|]", "", name)
-    name = re.sub(r"\s+", " ", name).strip().title()
-    return name
-
-
-def format_name(name, lessor=False):
-    name = clean_name(name)
-    parts = name.split(" ")
-
-    if (len(name) == 27 and len(parts) >= 4) or re.search(
-        r"(Inc\.?|Ltd\.?|Corp\.?)$", name, re.IGNORECASE
-    ):
-        return name
-
-    if lessor:
-        if len(parts) < 4 and len(name) < 27:
-            return " ".join(parts[1:] + [parts[0]])
-
-        return " ".join(parts[:3])
-
-    # Non-lessor names
-    if len(parts) == 1:
-        return name
-    return " ".join(parts[1:] + [parts[0]])

@@ -3,6 +3,7 @@
 /output
 /input
 /py/output/
+/py/assets/
 /.venv
 /.idea
 /py/.idea
@@ -15,8 +16,7 @@
 *.exe
 *.Ink
 *.pdf
-*.docx
-*.xlsx
+py/output/*.exe
 *.xls
 *.csv
 *.xlsm
@@ -24,4 +24,5 @@
 /py/names.py
 /py/config.xlsx
 /py/~$config.xlsx
+/node_modulesig.xlsx
 /node_modules
