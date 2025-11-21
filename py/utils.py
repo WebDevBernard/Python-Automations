@@ -63,12 +63,8 @@ def load_excel_mapping(
 
     mapping_path = Path(mapping_path)
     if not mapping_path.exists():
-        print(
-            f"Config file not found: {mapping_path.absolute()}"
-        )
-        print(
-            "Please create 'config.xlsx' in the current directory or visit"
-        )
+        print(f"Config file not found: {mapping_path.absolute()}")
+        print("Please create 'config.xlsx' in the current directory or visit")
         print(
             "https://github.com/WebDevBernard/Python-Automations to download the template."
         )

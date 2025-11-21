@@ -5,6 +5,7 @@ from pathlib import Path
 from manual_renewal_letter import manual_renewal_letter
 from sort_renewal_list import sort_renewal_list
 from auto_renewal_letter import auto_renewal_letter
+from reconciller import reconciller
 
 
 def main():
@@ -25,8 +26,11 @@ def main():
         auto_renewal_letter(config_data)
     elif event == "sort renewal list":
         sort_renewal_list()
+    elif event == "reconciller":
+        reconciller(config_data)
     else:
         print(f"Unknown event: {event}")
+
     print("\nExiting in ", end="")
     for i in range(3, 0, -1):
         print(f"{i} ", end="", flush=True)
