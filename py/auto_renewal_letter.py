@@ -461,14 +461,32 @@ def _join_names(names):
 
 
 def format_effective_date(effective_date_text):
-    """Extract just the date portion, removing time."""
+    """Extract and normalize the first date in the text to 'Month DD, YYYY'."""
+
     if not effective_date_text:
         return None
 
-    # Match full month name, day, year (e.g., "November 12, 2025")
-    match = re.search(r"([A-Z][a-z]+\s+\d{1,2},\s+\d{4})", effective_date_text)
+    # Pattern for formats like '26 Jan 2026'
+    dmy_pattern = r"(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})"
+
+    # Pattern for 'November 12, 2025'
+    long_month_pattern = r"([A-Z][a-z]+\s+\d{1,2},\s+\d{4})"
+
+    # Try long month first
+    match = re.search(long_month_pattern, effective_date_text)
     if match:
         return match.group(1)
+
+    # Try DMY (26 Jan 2026)
+    match = re.search(dmy_pattern, effective_date_text)
+    if match:
+        raw = match.group(1)
+        # Parse and convert to "Month DD, YYYY"
+        try:
+            dt = datetime.strptime(raw, "%d %b %Y")
+            return dt.strftime("%B %d, %Y")
+        except ValueError:
+            pass
 
     return effective_date_text
 
@@ -526,21 +544,20 @@ def format_mailing_address(name_and_address_text):
 
 
 def format_premium_amount(premium_text):
-    """Format premium amount from extracted text."""
+    """Ensure premium amount has $ and two decimal places."""
     if not premium_text:
         return None
 
-    # Extract dollar amount from text
-    match = re.search(dollar_regex, premium_text)
-    if match:
-        amount_str = match.group(1).replace(",", "")
-        try:
-            amount = float(amount_str)
-            return f"${amount:,.2f}"
-        except ValueError:
-            return premium_text
+    # Remove any existing $ and commas
+    cleaned = re.sub(r"[^\d.]", "", premium_text)
 
-    return premium_text
+    try:
+        amount = float(cleaned)
+        # Always format as currency
+        return f"${amount:,.2f}"
+    except ValueError:
+        # If conversion fails, return original text
+        return premium_text
 
 
 def format_additional_coverage(raw_data, insurer):
