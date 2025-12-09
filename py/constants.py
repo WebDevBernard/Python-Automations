@@ -110,10 +110,8 @@ POLICY_TYPE_DETECTION = {
         "rect": rect(25.70, 36.37, 51.04, 45.45),
     },
     "Intact": {
-        "keyword": "Version",
-        "rect": rect(
-            39.599998474121094, 733.7724609375, 334.03118896484375, 744.352294921875
-        ),
+        "keyword": "Intact Insurance",
+        "rect": None,
     },
     "Wawanesa": {
         "keyword": "BROKER OFFICE",

@@ -34,10 +34,15 @@ def detect_insurer(doc, rects):
     for insurer, cfg in rects["policy_type"].items():
         keyword = cfg.get("keyword")
         rect = cfg.get("rect")
+
         if rect:
             clip_text = first_page.get_text("text", clip=rect)
-            if clip_text and keyword.lower() in clip_text.lower():
-                return insurer
+        else:
+            # Scan whole page if no rect specified
+            clip_text = first_page.get_text("text")
+
+        if clip_text and keyword.lower() in clip_text.lower():
+            return insurer
     return None
 
 
