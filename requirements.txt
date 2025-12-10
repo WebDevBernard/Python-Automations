@@ -6,3 +6,4 @@ pymupdf
 pymupdf-fonts
 xlrd
 tabulate
+pandas

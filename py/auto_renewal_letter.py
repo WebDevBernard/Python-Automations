@@ -333,8 +333,13 @@ def format_fields(raw_data, insurer):
 
     # Policy number (direct copy)
     if raw_data.get("policy_number"):
-        fields["policy_number"] = raw_data["policy_number"]
-
+        if insurer == "Intact":
+            formatted_policy = format_policy_number(raw_data["policy_number"])
+            if formatted_policy:
+                fields["policy_number"] = formatted_policy
+        else:
+            # Keep original for all other insurers
+            fields["policy_number"] = raw_data["policy_number"]
     # Effective date (clean up time portion)
     if raw_data.get("effective_date"):
         fields["effective_date"] = format_effective_date(raw_data["effective_date"])
@@ -373,6 +378,25 @@ def format_fields(raw_data, insurer):
         fields.update(format_condo_earthquake_deductibles(raw_data, insurer))
 
     return fields
+
+
+def format_policy_number(policy_number):
+    """Format policy number to remove spaces and ensure it contains both letters and numbers."""
+    if not policy_number:
+        return None
+
+    # Remove all spaces
+    cleaned = policy_number.replace(" ", "")
+
+    # Ensure it contains at least one number
+    if not any(char.isdigit() for char in cleaned):
+        return None
+
+    # Ensure it contains at least one letter
+    if not any(char.isalpha() for char in cleaned):
+        return None
+
+    return cleaned.upper()  # Optional: uppercase letters for consistency
 
 
 def format_named_insured(name_and_address_text, insurer):

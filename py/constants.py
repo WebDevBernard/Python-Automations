@@ -206,7 +206,9 @@ FAMILY_FIELDS = {
 
 INTACT_FIELDS = {
     "name_and_address": absolute_rect_field(49.65, 152.65, 250, 212.49),
-    "policy_number": pattern_only_field(r"Policy Number:?\s+([A-Z0-9]+)"),
+    "policy_number": pattern_with_offset_field(
+        r"Policy Number", dx0=0.00, dy0=12.71, dx1=-248.93, dy1=15.44
+    ),
     "effective_date": pattern_with_offset_field(
         r"Policy Period At 12:01 A.M. local time at the postal address of the Named Insured",
         dx0=134.80,
