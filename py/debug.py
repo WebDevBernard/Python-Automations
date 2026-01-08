@@ -6,24 +6,19 @@ from tabulate import tabulate
 # === Configuration ===
 CONFIG = {
     # Feature toggles
-    "extract_text": False,
+    "extract_text": True,
     "extract_tables": False,
     "search_text": False,
-    "extract_image": False,
-    "calculate_offsets": True,  # NEW: Toggle for offset calculations
+    "extract_image": True,
+    "calculate_offsets": False,  # NEW: Toggle for offset calculations
     # Directories
     "input_dir": Path.home() / "Downloads",
     "output_dir": Path.home() / "Desktop",
     # Search settings
     "search_pattern": r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))",
     # Image extraction defaults
-    "page_num": 3,
-    "coords": (
-        217.20001220703125,
-        67.12498474121094,
-        300,
-        79.4909896850586,
-    ),
+    "page_num": 1,
+    "coords": (49.65, 152.65, 250, 212.49),
     "image_prefix": "img",
     # Offset calculation settings
     "pattern_rect": (

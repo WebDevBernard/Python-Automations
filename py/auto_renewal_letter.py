@@ -381,6 +381,7 @@ def format_fields(raw_data, insurer):
 
 
 def format_policy_number(policy_number):
+    print(policy_number)
     """Format policy number to remove spaces and ensure it contains both letters and numbers."""
     if not policy_number:
         return None
