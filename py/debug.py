@@ -6,7 +6,7 @@ from tabulate import tabulate
 # === Configuration ===
 CONFIG = {
     # Feature toggles
-    "extract_text": True,
+    "extract_text": False,
     "extract_tables": False,
     "search_text": False,
     "extract_image": True,
@@ -17,22 +17,17 @@ CONFIG = {
     # Search settings
     "search_pattern": r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))",
     # Image extraction defaults
-    "page_num": 1,
-    "coords": (49.65, 152.65, 250, 212.49),
+    "page_num": 3,
+    "coords": (394.0480041503906, 414.25, 571.4000244140625, 425.1540222167969),
     "image_prefix": "img",
     # Offset calculation settings
     "pattern_rect": (
-        217.20001220703125,
-        54.4100227355957,
-        548.9254150390625,
-        64.04902648925781,
+        40.599998474121094,
+        414.12200927734375,
+        323.5520324707031,
+        434.7539978027344,
     ),
-    "target_rect": (
-        217.20001220703125,
-        67.12498474121094,
-        300,
-        79.4909896850586,
-    ),
+    "target_rect": (394.0480041503906, 414.25, 571.4000244140625, 425.1540222167969),
 }
 
 

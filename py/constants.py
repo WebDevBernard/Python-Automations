@@ -280,14 +280,14 @@ WAWANESA_FIELDS = {
     "overland_water": pattern_only_field(r"Water Defence - Overland Water Coverage -"),
     "condo_deductible": pattern_with_offset_field(
         r"Condominium Deductible Coverage-",
-        dx0=357.90,
+        dx0=350,
         dy0=0.13,
         dx1=107.95,
         dy1=-9.60,
     ),
     "condo_earthquake_deductible": pattern_with_offset_field(
         r"Condominium Deductible Coverage Earthquake-",
-        dx0=357.90,
+        dx0=350,
         dy0=0.13,
         dx1=107.95,
         dy1=-9.60,
