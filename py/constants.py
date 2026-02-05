@@ -149,7 +149,7 @@ AVIVA_FIELDS = {
         dy1=-10.00,
         return_all=True,
     ),  # Can have multiple
-    "number_of_families": pattern_only_field(r"00([12])\s+Additional Family"),
+    "number_of_families": pattern_only_field(r"(?:00([12])\s+)?Additional Family"),
     "earthquake_coverage": pattern_only_field(
         r"Earthquake (?:- \d+(?:\.\d+)?% Of Personal Property - |Endorsement )(\d+(?:\.\d+)?%)"
     ),

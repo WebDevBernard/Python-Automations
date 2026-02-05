@@ -764,11 +764,13 @@ def format_number_of_families(raw_data, insurer):
 
     # Function to clamp values to 1, 2, or 3
     def sanitize_number(num):
+        if num in (None, "", []):
+            return 1  # Default for missing / regex-with-no-group cases
         try:
             num = int(num)
         except (ValueError, TypeError):
-            return 1  # Default to 1 if invalid
-        return min(max(num, 1), 3)  # Clamp to 1, 2, or 3
+            return 1
+        return min(max(num, 1), 3)
 
     # Default to 1 family for certain insurers if not specified
     if insurer in ["Wawanesa", "Intact", "Family", "Aviva"]:
@@ -777,32 +779,31 @@ def format_number_of_families(raw_data, insurer):
             return fields
 
     # Handle families data
-    if families_data:
-        if isinstance(families_data, str):
-            families = [families_data]
-        elif isinstance(families_data, list):
+    if families_data is not None:
+        if isinstance(families_data, list):
             families = families_data
         else:
-            families = []
+            families = [families_data]
 
         for index, count in enumerate(families, start=1):
             num = sanitize_number(count)
-            # For Family and Aviva insurers, add 1 but still clamp to 3 max
+
+            # Family & Aviva: "Additional Family" means +1
             if insurer in ["Family", "Aviva"]:
                 num = min(num + 1, 3)
+
             fields[f"number_of_families_{index}"] = num
 
     # Fallback to units if families not available
     elif units_data:
-        if isinstance(units_data, str):
-            units = [units_data]
-        elif isinstance(units_data, list):
+        if isinstance(units_data, list):
             units = units_data
         else:
-            units = []
+            units = [units_data]
 
         for index, unit_count in enumerate(units, start=1):
             fields[f"number_of_families_{index}"] = sanitize_number(unit_count)
+
     return fields
 
 

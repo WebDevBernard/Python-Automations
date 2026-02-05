@@ -6,10 +6,10 @@ from tabulate import tabulate
 # === Configuration ===
 CONFIG = {
     # Feature toggles
-    "extract_text": False,
+    "extract_text": True,
     "extract_tables": False,
     "search_text": False,
-    "extract_image": True,
+    "extract_image": False,
     "calculate_offsets": False,  # NEW: Toggle for offset calculations
     # Directories
     "input_dir": Path.home() / "Downloads",
@@ -18,16 +18,26 @@ CONFIG = {
     "search_pattern": r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))",
     # Image extraction defaults
     "page_num": 3,
-    "coords": (394.0480041503906, 414.25, 571.4000244140625, 425.1540222167969),
+    "coords": (
+        397.0480041503906,
+        334.75994873046875,
+        571.4000244140625,
+        345.6639709472656,
+    ),
     "image_prefix": "img",
     # Offset calculation settings
     "pattern_rect": (
         40.599998474121094,
-        414.12200927734375,
+        334.6319580078125,
         323.5520324707031,
-        434.7539978027344,
+        355.26397705078125,
     ),
-    "target_rect": (394.0480041503906, 414.25, 571.4000244140625, 425.1540222167969),
+    "target_rect": (
+        394.0480041503906,
+        334.75994873046875,
+        571.4000244140625,
+        345.6639709472656,
+    ),
 }
 
 
