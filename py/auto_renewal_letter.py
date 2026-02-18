@@ -908,6 +908,7 @@ def currency_to_float(currency_str):
     return float(currency_str.replace("$", "").replace(",", ""))
 
 
+# test
 # Add this function to check for matching glass policy
 def get_glass_policies():
     """Load glass policy data from Excel files in assets folder."""
