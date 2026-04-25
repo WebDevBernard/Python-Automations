@@ -887,16 +887,21 @@ def format_postal_code(postal):
 
 
 def get_month_day(date_str):
-    """Extract month and day from date string."""
     if date_str is None or not date_str:
         return None
     try:
-        # Handle different date formats
-        if isinstance(date_str, str):
-            # Try parsing "November 12, 2025" format
-            parsed = datetime.strptime(date_str, "%B %d, %Y")
+        if isinstance(date_str, datetime):
+            return date_str.strftime("%m-%d")
+        if isinstance(date_str, (int, float)):
+            parsed = datetime(1899, 12, 30) + timedelta(days=int(date_str))
             return parsed.strftime("%m-%d")
-    except:
+        if isinstance(date_str, str):
+            for fmt in ("%B %d, %Y", "%d-%b-%y", "%d-%b-%Y", "%Y-%m-%d", "%m/%d/%Y"):
+                try:
+                    return datetime.strptime(date_str, fmt).strftime("%m-%d")
+                except ValueError:
+                    continue
+    except Exception:
         pass
     return None
 
@@ -1049,17 +1054,16 @@ def check_glass_policy(fields, glass_policies):
 
         # Check renewal date match (month and day)
         glass_renewal = glass_row.get("renewal")
+
         if get_month_day(glass_renewal) == get_month_day(expiry_date):
-            # Match found!
             fields["glass_policynum"] = glass_row.get("policynum")
 
-            # Combine premium amounts
             current_premium = currency_to_float(fields.get("premium_amount", "$0.00"))
             glass_premium = float(glass_row.get("prem_amt", 0) or 0)
             total_premium = current_premium + glass_premium
             fields["premium_amount"] = f"${total_premium:,.2f}"
 
-            break  # Stop after first match
+            break
 
     return fields
 
