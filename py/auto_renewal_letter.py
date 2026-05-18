@@ -9,7 +9,6 @@ from pathlib import Path
 from constants import RECTS, REGEX_PATTERNS
 from utils import write_to_new_docx
 
-
 # Regex patterns
 address_regex = REGEX_PATTERNS["address"]
 postal_code_regex = REGEX_PATTERNS.get("postal_code")
@@ -896,7 +895,14 @@ def get_month_day(date_str):
             parsed = datetime(1899, 12, 30) + timedelta(days=int(date_str))
             return parsed.strftime("%m-%d")
         if isinstance(date_str, str):
-            for fmt in ("%B %d, %Y", "%d-%b-%y", "%d-%b-%Y", "%Y-%m-%d", "%m/%d/%Y"):
+            for fmt in (
+                "%B %d, %Y",
+                "%b %d, %Y",
+                "%d-%b-%y",
+                "%d-%b-%Y",
+                "%Y-%m-%d",
+                "%m/%d/%Y",
+            ):
                 try:
                     return datetime.strptime(date_str, fmt).strftime("%m-%d")
                 except ValueError:
@@ -1029,42 +1035,62 @@ def get_glass_policies():
 # Add this function to check for matching glass policy
 def check_glass_policy(fields, glass_policies):
     """Check if there's a matching glass policy and update fields accordingly."""
+    # print("\n--- GLASS POLICY DEBUG ---")
+
     if glass_policies is None or not glass_policies:
+        # print("DEBUG: No glass policies loaded (None or empty).")
         return fields
 
+    # print(f"DEBUG: Loaded {len(glass_policies)} glass policy records.")
+
     # Only check for home policies
-    if fields.get("risk_type_1") != "home":
+    risk_type = fields.get("risk_type_1")
+    # print(f"DEBUG: risk_type_1 = {risk_type!r}")
+    if risk_type != "home":
+        # print("DEBUG: Skipping glass — risk type is not 'home'.")
         return fields
 
     mailing_postal = fields.get("address_line_three")
-    expiry_date = fields.get("effective_date")  # Assuming this is the renewal date
+    expiry_date = fields.get("effective_date")
+    # print(f"DEBUG: mailing_postal   = {mailing_postal!r}")
+    # print(f"DEBUG: effective_date   = {expiry_date!r} (type: {type(expiry_date).__name__})")
+    # print(f"DEBUG: effective_date M/D = {get_month_day(expiry_date)!r}")
 
     if not mailing_postal or not expiry_date:
+        # print("DEBUG: Missing postal code or effective date — cannot match.")
         return fields
 
     # Check for matches
+    # rel_count = 0
     for glass_row in glass_policies:
         # Check if insurer is REL
         if glass_row.get("insurer") != "REL":
             continue
+        # rel_count += 1
 
-        # Check postal code match
-        if glass_row.get("postal_code") != mailing_postal:
-            continue
-
-        # Check renewal date match (month and day)
+        glass_postal = glass_row.get("postal_code")
         glass_renewal = glass_row.get("renewal")
 
+        if glass_postal != mailing_postal:
+            continue
+
         if get_month_day(glass_renewal) == get_month_day(expiry_date):
+            # print(f"DEBUG: MATCH FOUND! glass_policynum = {glass_row.get('policynum')!r}")
+
             fields["glass_policynum"] = glass_row.get("policynum")
 
             current_premium = currency_to_float(fields.get("premium_amount", "$0.00"))
             glass_premium = float(glass_row.get("prem_amt", 0) or 0)
             total_premium = current_premium + glass_premium
             fields["premium_amount"] = f"${total_premium:,.2f}"
-
+            # print(f"DEBUG: premium: {current_premium:.2f} + {glass_premium:.2f} = {total_premium:.2f}")
             break
+        # else:
+        #     print("DEBUG: Postal matched but date did not — continuing...")
+    # else:
+    #     print(f"DEBUG: Checked {rel_count} REL row(s), no match found.")
 
+    # print("--- END GLASS DEBUG ---\n")
     return fields
 
 

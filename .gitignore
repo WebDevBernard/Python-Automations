@@ -1,28 +1,53 @@
-/venv
-/assets
-/output
-/input
-/py/output/
-/py/assets/
-/.venv
-/.idea
-/py/.idea
-./idea
-/samples
-/py/__pycache__
-/__pycache__
+# Virtual environments
+venv/
+.venv/
+
+# Build / output / input
+build/
+output/
+input/
+assets/
+samples/
+
+# Python-specific
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Py project folders
+py/output/
+py/assets/
+
+# IDEs
+.idea/
+py/.idea/
+
+# Node
+node_modules/
+
+# Environment files
 *.env
+
+# Archives / binaries
 *.zip
 *.exe
-*.Ink
+
+# Documents / data files
 *.pdf
-py/output/*.exe
 *.xls
-*.csv
+*.xlsx
 *.xlsm
+*.csv
 *.png
-/py/names.py
-/py/config.xlsx
-/py/~$config.xlsx
-/node_modulesig.xlsx
-/node_modules
+
+# Python files to ignore
+py/names.py
+
+# Config files
+config.xlsx
+py/config.xlsx
+py/~$config.xlsx
+
+# Misc
+*.Ink
+CLAUDE.md
