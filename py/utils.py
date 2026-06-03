@@ -4,6 +4,8 @@ import sys
 import time
 import openpyxl
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
+
 from docxtpl import DocxTemplate
 
 
@@ -83,10 +85,28 @@ def load_excel_mapping(
     return {key: ws[cell].value for key, cell in excel_mappings.items()}
 
 
+def _escape_xml_values(data: dict) -> dict:
+    """Escape XML special characters (&, <, >, etc.) in all string values."""
+    if not data:
+        return data
+    escaped = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            escaped[key] = xml_escape(value)
+        else:
+            escaped[key] = value
+    return escaped
+
+
 def write_to_new_docx(
     template_path: Path | None = None, data: dict = None, output_dir: Path | None = None
 ) -> bool:
     try:
+        # Capture filename-safe value before XML escaping
+        named_insured = str(data.get("named_insured", "Unnamed Client")).rstrip(".:").strip()
+
+        data = _escape_xml_values(data)
+
         # Auto-detect template if not provided
         if template_path is None:
             assets_dir = Path.cwd() / "assets"
@@ -132,9 +152,6 @@ def write_to_new_docx(
         doc = DocxTemplate(template_path)
         doc.render(data)
 
-        named_insured = (
-            str(data.get("named_insured", "Unnamed Client")).rstrip(".:").strip()
-        )
         output_dir = output_dir or (Path.home() / "Desktop")
         output_filename = output_dir / f"{named_insured} Renewal Letter.docx"
         doc.save(unique_file_name(output_filename))

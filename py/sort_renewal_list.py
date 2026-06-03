@@ -38,7 +38,7 @@ def sort_renewal_list():
         "ccode",
         "name",
         "pcode",
-        "csrcode",
+        # "csrcode",
         "insurer",
         "buscode",
         "renewal",
@@ -107,8 +107,8 @@ def sort_renewal_list():
 
     # Adjust column widths
     for i, col in enumerate(column_list, 1):
-        max_len = max(df[col].astype(str).map(len).max(), len(col))
-        if col in ["pcode", "csrcode", "Pulled", "D/L"]:
+        max_len = max(df[col].fillna("").astype(str).map(len).max(), len(col))
+        if col in ["pcode", "Pulled", "D/L"]:
             ws.column_dimensions[chr(64 + i)].width = 5.0
         elif col == "ccode":
             ws.column_dimensions[chr(64 + i)].width = max_len + 4
