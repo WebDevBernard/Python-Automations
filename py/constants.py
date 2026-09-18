@@ -1,3 +1,4 @@
+import math
 import re
 import fitz
 
@@ -168,6 +169,9 @@ AVIVA_FIELDS = {
 }
 
 
+FAMILY_TENANT_OCCUPIED = "Occupancy: Tenant Occupied"
+
+
 FAMILY_FIELDS = {
     "name_and_address": absolute_rect_field(25.34, 153.38, 150, 228.67),
     "policy_number": pattern_with_offset_field(
@@ -180,6 +184,7 @@ FAMILY_FIELDS = {
         r"(?i)LOCATION\s+OF\s+INSURED\s+PROPERTY:\s*(.+)"
     ),
     "form_type": pattern_only_field(r"(?i)All\s+Perils:\s*(Included)"),
+    "occupancy": pattern_only_field(r"(?i)Occupancy:\s*Tenant Occupied"),
     "risk_type": pattern_with_offset_field(
         r"POLICY TYPE", dx0=-0.94, dy0=11.10, dx1=7.76, dy1=11.45
     ),
@@ -316,3 +321,125 @@ RECTS = {
     "Intact": INTACT_FIELDS,
     "Wawanesa": WAWANESA_FIELDS,
 }
+
+
+# --------------- INSURER NAMES -----------------
+def get_insurer(policy_number):
+    """Determines insurer based on policy number pattern:
+      - Starts with GR or GC          -> Gore Mutual
+      - Starts with VLO               -> Vailo
+      - Starts with 50                -> Intact
+      - Starts with 00                -> Economical
+      - 8 digits, starts with 3 or 4  -> Wawanesa
+    """
+    if not policy_number:
+        return ""
+
+    p = str(policy_number).strip().upper()
+
+    if p.startswith("GR") or p.startswith("GC"):
+        return "Gore Mutual"
+    if p.startswith("LTRD") or p.startswith("BIND"):
+        return "Cansure"
+    if p.startswith("VLO"):
+        return "Vailo"
+    if p.startswith("50"):
+        return "Intact"
+    if p.startswith("00"):
+        return "Economical"
+    if len(p) == 8 and p.isdigit() and p[0] in ("3", "4"):
+        return "Wawanesa"
+
+    return ""
+
+
+INSURER_MAP = {
+    "999999": "Cansure Insurance Company",
+    "ACTURI": "Acturis Rating",
+    "AGI": "Agile Underwriting Solutions",
+    "ALL": "Allianz",
+    "AVIV": "Aviva Insurance",
+    "BEA": "Beacon Underwriting Ltd.",
+    "BEAZ": "Beazley Canada Limited",
+    "BECK": "Beck Glass (2012) Ltd.",
+    "BUR": "Burns & Wilcox Canada, ULC",
+    "CAN": "Cansure Insurance Company",
+    "CHU": "Chutter Underwriting Services",
+    "CNS": "Royal & Sun Alliance Insurance Company",
+    "DRI": "Drivesure Insurance Services Canada Ltd.",
+    "ECON": "Economical Mutual Insurance Company",
+    "ELT": "Aviva Elite",
+    "FIC": "Family Insurance",
+    "FOR": "Forward Insurance Managers Ltd.",
+    "GUA": "Guardian Risk Managers",
+    "HWI": "Horizon West Insurance Services Ltd.",
+    "I3U": "I3 Underwriting Services",
+    "INS": "Insurebc Underwriting Services Inc",
+    "OPT": "Optiom Inc.",
+    "PAL": "PAL Insurance Brokers Canada Ltd.",
+    "PBC": "Pacific Blue Cross",
+    "PRE": "Premier Canada Assurance Managers Ltd.",
+    "PREM": "Premier Marine Insurance Managers Group",
+    "REL": "Reliance Glass",
+    "SIG": "Signature Risk Partners Inc.",
+    "SOU": "South Western Insurance Group",
+    "SPG": "SPG Canada",
+    "SRI": "Special Risk Insurance Managers Ltd.",
+    "SUM": "Strategic Underwriting Managers Inc.",
+    "TOT": "Totten Group Insurance",
+    "TSW": "TSW Management Services Inc.",
+    "VAI": "Vailo Insurance Services Ltd.",
+    "WAWA": "Wawanesa Mutual Insurance Company",
+    "WELL": "Intact Specialty Solutions",
+    "WES": "Western Underwriting Managers Ltd.",
+    "WESU": "Intact Insurance Company",
+}
+
+
+def _capitalize_word(word: str) -> str:
+    return word[:1].upper() + word[1:].lower() if word else word
+
+
+def title_case_generic(text) -> str:
+    """Plain title-case: capitalizes each letter-run, leaves everything
+    else (digits, punctuation, spacing) untouched."""
+    if text is None:
+        return ""
+    if isinstance(text, float) and math.isnan(text):
+        return ""
+    return re.sub(
+        r"[A-Za-z]+", lambda m: _capitalize_word(m.group(0)), str(text)
+    )
+
+
+SHORT_INSURER_FULL = {
+    "Gore Mutual": "Gore Mutual Insurance Company",
+    "Wawanesa": "Wawanesa Mutual Insurance Company",
+    "Intact": "Intact Insurance Company",
+    "Economical": "Economical Mutual Insurance Company",
+    "Cansure": "Cansure Insurance Company",
+    "Vailo": "Vailo Insurance Services Ltd.",
+}
+
+
+def resolve_insurer(insurer_code, policy_number=""):
+    """Maps an insurer code (e.g. WAWA, ECON, WESU) to the same full
+    company name used by disclosure_notice.py. HWI rows are resolved by
+    policy-number prefix; empty/unmapped codes fall back to prefix
+    detection. Short names returned by get_insurer (e.g. 'Wawanesa',
+    'Gore Mutual') are expanded to the full company name, and bare
+    'Cansure' is always expanded to the full name."""
+    raw = "" if insurer_code is None else str(insurer_code).strip()
+    code = raw.upper()
+
+    if not code:
+        name = get_insurer(policy_number)
+    elif code == "HWI":
+        name = get_insurer(policy_number) or "Cansure Insurance Company"
+    else:
+        name = INSURER_MAP.get(code, title_case_generic(raw))
+
+    name = SHORT_INSURER_FULL.get(str(name).strip(), name)
+    if str(name).strip().upper() == "CANSURE":
+        name = "Cansure Insurance Company"
+    return name

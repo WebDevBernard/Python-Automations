@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 import pandas as pd
 from openpyxl import load_workbook
@@ -65,6 +66,11 @@ def sort_renewal_list():
     # Replace renewal column with formatted version
     df["renewal"] = df["renewal_disp"]
     df = df.drop(columns=["renewal_disp", "renewal_sort"])
+
+    # Sanitize illegal characters for openpyxl
+    illegal_chars = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
+    for col in df.select_dtypes(include="object").columns:
+        df[col] = df[col].str.replace(illegal_chars, "", regex=True)
 
     # Add blank spacer rows between insurer groups
     groups = []

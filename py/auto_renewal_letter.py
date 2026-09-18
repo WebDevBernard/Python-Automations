@@ -6,7 +6,7 @@ import xlrd
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
-from constants import RECTS, REGEX_PATTERNS
+from constants import FAMILY_TENANT_OCCUPIED, RECTS, REGEX_PATTERNS
 from utils import write_to_new_docx
 
 # Regex patterns
@@ -693,6 +693,7 @@ def format_risk_types(raw_data, insurer):
 
     risk_type_data = raw_data.get("risk_type")
     form_type_data = raw_data.get("form_type")
+    occupancy = raw_data.get("occupancy")
 
     # Handle both string and list
     if isinstance(risk_type_data, str):
@@ -728,6 +729,15 @@ def format_risk_types(raw_data, insurer):
 
         if "home" in combined_lower:
             fields[f"risk_type_{index}"] = "home"
+        elif (
+            insurer == "Family"
+            and occupancy
+            and FAMILY_TENANT_OCCUPIED.lower() in occupancy.lower()
+        ):
+            if "condominium" in combined_lower:
+                fields[f"risk_type_{index}"] = "rented_condo"
+            else:
+                fields[f"risk_type_{index}"] = "rented_dwelling"
         elif insurer == "Aviva" and "condominium" in combined_lower:
             fields[f"risk_type_{index}"] = "condo"
         elif insurer == "Family" and "condominium" in combined_lower:
@@ -1158,7 +1168,8 @@ def auto_renewal_letter(config=None):
                     # print_fields(fields)
 
                     # 8. Write to docx
-                    write_to_new_docx(data=fields)
+                    template_path = Path.cwd() / "assets" / "Renewal Letter.docx"
+                    write_to_new_docx(template_path=template_path, data=fields)
 
                 else:
                     print(f"  ✗ No insurer detected")

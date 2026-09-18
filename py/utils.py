@@ -47,7 +47,7 @@ def unique_file_name(path: str) -> str:
     filename = safe_filename(filename)
 
     # Remove existing trailing (n)
-    base_name = re.sub(r"\s*\(\d+\)$", "", filename)
+    base_name = re.sub(r"\s*\((\d{1,3})\)$", "", filename)
 
     counter = 1
     new_path = os.path.join(directory, f"{base_name}{extension}")
@@ -71,7 +71,7 @@ def load_excel_mapping(
             "https://github.com/WebDevBernard/Python-Automations to download the template."
         )
         print("\nExiting in ", end="")
-        for i in range(10, 0, -1):
+        for i in range(3, 0, -1):
             print(f"{i} ", end="", flush=True)
             time.sleep(1)
         print()
@@ -99,11 +99,17 @@ def _escape_xml_values(data: dict) -> dict:
 
 
 def write_to_new_docx(
-    template_path: Path | None = None, data: dict = None, output_dir: Path | None = None
+    template_path: Path | None = None,
+    data: dict = None,
+    output_dir: Path | None = None,
+    output_suffix: str = "Renewal Letter",
+    output_year: int | None = None,
 ) -> bool:
     try:
         # Capture filename-safe value before XML escaping
-        named_insured = str(data.get("named_insured", "Unnamed Client")).rstrip(".:").strip()
+        named_insured = safe_filename(
+            str(data.get("named_insured", "Unnamed Client")).strip()
+        )
 
         data = _escape_xml_values(data)
 
@@ -153,7 +159,12 @@ def write_to_new_docx(
         doc.render(data)
 
         output_dir = output_dir or (Path.home() / "Desktop")
-        output_filename = output_dir / f"{named_insured} Renewal Letter.docx"
+        if output_year:
+            output_filename = (
+                output_dir / f"{named_insured} {output_suffix} {output_year}.docx"
+            )
+        else:
+            output_filename = output_dir / f"{named_insured} {output_suffix}.docx"
         doc.save(unique_file_name(output_filename))
         return True
 

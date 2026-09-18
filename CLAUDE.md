@@ -35,7 +35,7 @@ python -m auto_py_to_exe
 The main automation dispatcher is `py/file_completion_tool.py`, which:
 - Reads configuration from `config.xlsx` (in `py/` directory)
 - Routes tasks based on the `event` field in cell B3
-- Supported events: "manual renewal letter", "auto renewal letter", "sort renewal list", "reconciller"
+- Supported events: "auto renewal letter", "manual renewal letter", "sort renewal list", "strata disclosure letter from statment"
 
 ### Key Configuration File
 
@@ -158,6 +158,17 @@ PDF → detect_insurer() → extract_fields() → format_fields() → check_glas
 
 **Column Order:**
 `policynum, ccode, name, pcode, csrcode, insurer, buscode, renewal, Pulled, D/L`
+
+### 4. Strata Disclosure Letter from Statement (`strata_disclosure_from_statement.py`)
+- Uses the 2 most recent PDFs in `~/Downloads` as statements
+- Extracts the name and policy address from the `To:` block in the statement PDF (first line after `To:` = name, 2nd/3rd lines = address)
+- Verifies against the `From:` block (same name/address structure); warns on mismatch but still uses `To:`
+- Producer code is the 3rd whitespace-separated token on the line after the `To:` address (e.g. `BCS358 BY NT NT` → `NT`), resolved to a producer name via the producer mapping in `config.xlsx` rows 27+ (column A code, column B name)
+- Reuses `statement_to_excel.extract_table_from_pdf()` to parse the transaction table (debug output removed)
+- Generates one `Strata Disclosure Notice.docx` letter per policy (named insured + address from `To:` block, policy number / premium / effective date / insurer from transactions)
+- Falls back to a single letter with statement totals when no policy column exists
+- Insurer derived via `get_insurer()` (policy number prefix rules in `disclosure_notice_strata.py`)
+- Output: `~/Desktop`
 
 ### 4. Reconciler (`reconciller.py`)
 - Compares PDF tables to find matching policy numbers and premiums across multiple PDFs

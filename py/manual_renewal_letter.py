@@ -75,7 +75,8 @@ def manual_renewal_letter(config: dict) -> None:
 
         config["effective_date"] = parse_date(config.get("effective_date"))
 
-        if write_to_new_docx(data=config):
+        template_path = Path.cwd() / "assets" / "Renewal Letter.docx"
+        if write_to_new_docx(template_path=template_path, data=config):
             print("******** Manual Renewal Letter ran successfully ********")
     except Exception as e:
         import traceback

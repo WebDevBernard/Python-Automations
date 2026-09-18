@@ -7,3 +7,4 @@ pymupdf-fonts
 xlrd
 tabulate
 pandas
+pywin32

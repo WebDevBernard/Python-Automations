@@ -13,7 +13,7 @@ CONFIG = {
     "calculate_offsets": False,  # NEW: Toggle for offset calculations
     # Directories
     "input_dir": Path.home() / "Downloads",
-    "output_dir": Path(r"C:\Users\berna\OneDrive\Desktop"),
+    "output_dir": Path.home() / "Desktop",
     # Search settings
     "search_pattern": r"(Owner\s|Applicant|Name of Insured \(surname followed by given name\(s\)\))",
     # Image extraction defaults
