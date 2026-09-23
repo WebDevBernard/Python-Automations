@@ -1,12 +1,249 @@
+import math
 import os
 import re
 import sys
 import time
-import openpyxl
+from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
+import openpyxl
 from docxtpl import DocxTemplate
+
+
+DATE_FORMAT = "%B %d, %Y"
+
+POSTAL_CODE_RE = re.compile(
+    r"([ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z][ ]?\d[ABCEGHJ-NPRSTV-Z]\d)$"
+)
+
+
+def safe_strip(value):
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    return str(value).strip()
+
+
+def smart_title(text):
+    """
+    Title-cases words, but leaves a word untouched if:
+      - it contains a digit, or
+      - the NEXT word starts with a digit (so labels like "BCS 3746" stay intact)
+    Certain small words (e.g. "of") are kept lowercase unless they're the first word.
+    """
+    if not text:
+        return text
+
+    lowercase_words = {"of", "the", "and", "a", "an", "in", "on", "for"}
+
+    words = text.split(" ")
+    result = []
+    for i, word in enumerate(words):
+        has_digit = any(ch.isdigit() for ch in word)
+        next_word = words[i + 1] if i + 1 < len(words) else ""
+        next_starts_digit = bool(next_word) and next_word[0].isdigit()
+
+        if has_digit or next_starts_digit:
+            result.append(word)
+        elif word.lower() in lowercase_words and i != 0:
+            result.append(word.lower())
+        else:
+            result.append(word[:1].upper() + word[1:].lower() if word else word)
+    return " ".join(result)
+
+
+def to_float(value):
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().replace("$", "").replace(",", "")
+    if not s:
+        return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def format_amount(value):
+    """Strips any existing $ / commas and reformats as a plain number string."""
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return f"{value:,.2f}"
+    s = str(value).strip().replace("$", "").replace(",", "")
+    if not s:
+        return ""
+    try:
+        return f"{float(s):,.2f}"
+    except ValueError:
+        return s
+
+
+def parse_date(value):
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime(DATE_FORMAT)
+    value = str(value).strip()
+    date_formats = [
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%d-%b-%y",
+    ]
+    for fmt in date_formats:
+        try:
+            return datetime.strptime(value, fmt).strftime(DATE_FORMAT)
+        except ValueError:
+            continue
+    print(f"\u26a0\ufe0f Could not parse date: {value}")
+    return value
+
+
+def parse_date_to_dt(value):
+    """Same parsing as parse_date, but returns a datetime object (or None)."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    value = str(value).strip()
+    date_formats = [
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%d-%b-%y",
+    ]
+    for fmt in date_formats:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    print(f"\u26a0\ufe0f Could not parse transaction date: {value}")
+    return None
+
+
+def load_producer_mapping(mapping_path):
+    wb = openpyxl.load_workbook(mapping_path, data_only=True)
+    if "File Completion Tool" not in wb.sheetnames:
+        return {}
+    ws = wb["File Completion Tool"]
+    mapping = {}
+    row = 27
+    while True:
+        code = safe_strip(ws.cell(row=row, column=1).value)
+        name = safe_strip(ws.cell(row=row, column=2).value)
+        if not code and not name:
+            break
+        if code:
+            mapping[code.lower()] = name
+        row += 1
+    return mapping
+
+
+def _split_mailing_address(value):
+    """Convert a comma-joined mailing address into newline-separated
+    street / city-province / postal lines so the template renders a new
+    line after the street address and after the city/province (matching
+    the renewal letter). Addresses that are already newline-separated or
+    that cannot be reliably split are returned unchanged."""
+    text = safe_strip(value)
+    if not text or "\n" in text:
+        return text
+
+    cleaned = re.sub(r",?\s*Canada\s*$", "", text, flags=re.IGNORECASE).strip()
+    match = POSTAL_CODE_RE.search(cleaned)
+    if not match:
+        return text
+
+    postal = match.group(1).upper()
+    before = cleaned[: match.start()].rstrip(" ,")
+    if not before:
+        return text
+
+    parts = [p.strip() for p in before.split(",") if p.strip()]
+    if len(parts) < 2:
+        return f"{before}\n{postal}"
+
+    street = parts[0]
+    city_province = ", ".join(parts[1:])
+    return f"{street}\n{city_province}\n{postal}"
+
+
+def address_one_title_case(sentence):
+    """Title case with ordinal numbers (1st, 2nd) in lowercase."""
+    ordinal_pattern = re.compile(r"\b\d+(st|nd|rd|th)\b")
+    return " ".join(
+        word.lower() if ordinal_pattern.match(word) else word.capitalize()
+        for word in sentence.split()
+    )
+
+
+def address_two_title_case(strings_list):
+    """Title case with words longer than 2 characters capitalized, and province codes uppercased."""
+    words = strings_list.split()
+
+    # Canadian province codes that should be uppercase
+    province_codes = {
+        "bc",
+        "ab",
+        "sk",
+        "mb",
+        "on",
+        "qc",
+        "nb",
+        "ns",
+        "pe",
+        "nl",
+        "yt",
+        "nt",
+        "nu",
+    }
+
+    capitalized_words = []
+    for word in words:
+        word_stripped = word.strip()
+        # If it's a 2-letter province code, uppercase it
+        if len(word_stripped) == 2 and word_stripped.lower() in province_codes:
+            capitalized_words.append(word_stripped.upper())
+        # Otherwise, capitalize if longer than 2 characters
+        elif len(word_stripped) > 2:
+            capitalized_words.append(word_stripped.capitalize())
+        else:
+            capitalized_words.append(word_stripped)
+
+    return " ".join(capitalized_words)
+
+
+def risk_address_title_case(address):
+    """Title case with special handling for state codes and ordinals."""
+    parts = address.split()
+    if not parts:
+        return address
+
+    last_part = parts[-1]
+    if len(last_part) == 2:
+        last_part = last_part.upper()
+
+    titlecased_parts = []
+    for part in parts[:-1]:
+        if (
+            len(part) > 2
+            and part[:-2].isdigit()
+            and part[-2:].lower() in ["th", "rd", "nd", "st"]
+        ):
+            titlecased_parts.append(part.lower())
+        else:
+            titlecased_parts.append(part.title())
+
+    return " ".join(titlecased_parts) + (" " + last_part if parts else "")
 
 
 # -------------------- Progress Bar -------------------- #

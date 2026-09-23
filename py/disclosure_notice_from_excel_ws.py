@@ -1,103 +1,22 @@
-import math
-import re
-from datetime import datetime
 from pathlib import Path
+
 import openpyxl
 from docxtpl import DocxTemplate
-from utils import (
-    write_to_new_docx,
-    safe_filename,
-    unique_file_name,
-    progressbar,
-    _escape_xml_values,
-)
 
-DATE_FORMAT = "%B %d, %Y"
+from utils import (
+    _escape_xml_values,
+    _split_mailing_address,
+    load_producer_mapping,
+    parse_date,
+    progressbar,
+    safe_filename,
+    safe_strip,
+    unique_file_name,
+    write_to_new_docx,
+)
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
 OUTPUT_DIR = Path.home() / "Desktop" / "Disclosure Notices"
-
-POSTAL_CODE_RE = re.compile(
-    r"([ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z][ ]?\d[ABCEGHJ-NPRSTV-Z]\d)$"
-)
-
-
-def safe_strip(value):
-    if value is None:
-        return ""
-    if isinstance(value, float) and math.isnan(value):
-        return ""
-    return str(value).strip()
-
-
-def _split_mailing_address(value):
-    """Convert a comma-joined mailing address into newline-separated
-    street / city-province / postal lines so the template renders a new
-    line after the street address and after the city/province (matching
-    the renewal letter). Addresses that are already newline-separated or
-    that cannot be reliably split are returned unchanged."""
-    text = safe_strip(value)
-    if not text or "\n" in text:
-        return text
-
-    cleaned = re.sub(r",?\s*Canada\s*$", "", text, flags=re.IGNORECASE).strip()
-    match = POSTAL_CODE_RE.search(cleaned)
-    if not match:
-        return text
-
-    postal = match.group(1).upper()
-    before = cleaned[: match.start()].rstrip(" ,")
-    if not before:
-        return text
-
-    parts = [p.strip() for p in before.split(",") if p.strip()]
-    if len(parts) < 2:
-        return text
-
-    street = parts[0]
-    city_province = ", ".join(parts[1:])
-    return f"{street}\n{city_province}\n{postal}"
-
-
-def parse_date(value):
-    if not value:
-        return ""
-    if isinstance(value, datetime):
-        return value.strftime(DATE_FORMAT)
-    value = str(value).strip()
-    date_formats = [
-        "%Y-%m-%d",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-        "%B %d, %Y",
-        "%b %d, %Y",
-        "%d-%b-%y",
-    ]
-    for fmt in date_formats:
-        try:
-            return datetime.strptime(value, fmt).strftime(DATE_FORMAT)
-        except ValueError:
-            continue
-    print(f"\u26a0\ufe0f Could not parse date: {value}")
-    return value
-
-
-def load_producer_mapping(mapping_path):
-    wb = openpyxl.load_workbook(mapping_path, data_only=True)
-    if "File Completion Tool" not in wb.sheetnames:
-        return {}
-    ws = wb["File Completion Tool"]
-    mapping = {}
-    row = 27
-    while True:
-        code = safe_strip(ws.cell(row=row, column=1).value)
-        name = safe_strip(ws.cell(row=row, column=2).value)
-        if not code and not name:
-            break
-        if code:
-            mapping[code.lower()] = name
-        row += 1
-    return mapping
 
 
 def load_excluded_ccodes(mapping_path):

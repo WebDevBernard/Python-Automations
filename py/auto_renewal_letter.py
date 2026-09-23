@@ -7,7 +7,12 @@ import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from constants import FAMILY_TENANT_OCCUPIED, RECTS, REGEX_PATTERNS
-from utils import write_to_new_docx
+from utils import (
+    address_one_title_case,
+    address_two_title_case,
+    risk_address_title_case,
+    write_to_new_docx,
+)
 
 # Regex patterns
 address_regex = REGEX_PATTERNS["address"]
@@ -232,76 +237,6 @@ def extract_text_from_absolute_rect(doc, rect):
     first_page = doc[0]
     text = first_page.get_text("text", clip=rect).strip()
     return text if text else None
-
-
-# ----------------- TITLE CASE HELPERS ----------------- #
-def address_one_title_case(sentence):
-    """Title case with ordinal numbers (1st, 2nd) in lowercase."""
-    ordinal_pattern = re.compile(r"\b\d+(st|nd|rd|th)\b")
-    return " ".join(
-        word.lower() if ordinal_pattern.match(word) else word.capitalize()
-        for word in sentence.split()
-    )
-
-
-def address_two_title_case(strings_list):
-    """Title case with words longer than 2 characters capitalized, and province codes uppercased."""
-    words = strings_list.split()
-
-    # Canadian province codes that should be uppercase
-    province_codes = {
-        "bc",
-        "ab",
-        "sk",
-        "mb",
-        "on",
-        "qc",
-        "nb",
-        "ns",
-        "pe",
-        "nl",
-        "yt",
-        "nt",
-        "nu",
-    }
-
-    capitalized_words = []
-    for word in words:
-        word_stripped = word.strip()
-        # If it's a 2-letter province code, uppercase it
-        if len(word_stripped) == 2 and word_stripped.lower() in province_codes:
-            capitalized_words.append(word_stripped.upper())
-        # Otherwise, capitalize if longer than 2 characters
-        elif len(word_stripped) > 2:
-            capitalized_words.append(word_stripped.capitalize())
-        else:
-            capitalized_words.append(word_stripped)
-
-    return " ".join(capitalized_words)
-
-
-def risk_address_title_case(address):
-    """Title case with special handling for state codes and ordinals."""
-    parts = address.split()
-    if not parts:
-        return address
-
-    last_part = parts[-1]
-    if len(last_part) == 2:
-        last_part = last_part.upper()
-
-    titlecased_parts = []
-    for part in parts[:-1]:
-        if (
-            len(part) > 2
-            and part[:-2].isdigit()
-            and part[-2:].lower() in ["th", "rd", "nd", "st"]
-        ):
-            titlecased_parts.append(part.lower())
-        else:
-            titlecased_parts.append(part.title())
-
-    return " ".join(titlecased_parts) + (" " + last_part if parts else "")
 
 
 # ----------------- UTILITY HELPERS ----------------- #

@@ -326,11 +326,11 @@ RECTS = {
 # --------------- INSURER NAMES -----------------
 def get_insurer(policy_number):
     """Determines insurer based on policy number pattern:
-      - Starts with GR or GC          -> Gore Mutual
-      - Starts with VLO               -> Vailo
-      - Starts with 50                -> Intact
-      - Starts with 00                -> Economical
-      - 8 digits, starts with 3 or 4  -> Wawanesa
+    - Starts with GR or GC          -> Gore Mutual
+    - Starts with VLO               -> Vailo
+    - Starts with 50                -> Intact
+    - Starts with 00                -> Economical
+    - 8 digits, starts with 3 or 4  -> Wawanesa
     """
     if not policy_number:
         return ""
@@ -338,17 +338,17 @@ def get_insurer(policy_number):
     p = str(policy_number).strip().upper()
 
     if p.startswith("GR") or p.startswith("GC"):
-        return "Gore Mutual"
+        return "Gore Mutual Insurance Company"
     if p.startswith("LTRD") or p.startswith("BIND"):
-        return "Cansure"
+        return "Cansure Insurance Company"
     if p.startswith("VLO"):
-        return "Vailo"
+        return "Vailo Insruace Services Ltd."
     if p.startswith("50"):
-        return "Intact"
+        return "Intact Specialty Solutions Ltd."
     if p.startswith("00"):
-        return "Economical"
+        return "Economical Mutual Insurance Company"
     if len(p) == 8 and p.isdigit() and p[0] in ("3", "4"):
-        return "Wawanesa"
+        return "Wawanesa Mutual Insurance Company"
 
     return ""
 
@@ -407,9 +407,7 @@ def title_case_generic(text) -> str:
         return ""
     if isinstance(text, float) and math.isnan(text):
         return ""
-    return re.sub(
-        r"[A-Za-z]+", lambda m: _capitalize_word(m.group(0)), str(text)
-    )
+    return re.sub(r"[A-Za-z]+", lambda m: _capitalize_word(m.group(0)), str(text))
 
 
 SHORT_INSURER_FULL = {

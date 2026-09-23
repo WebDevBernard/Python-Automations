@@ -1,12 +1,20 @@
-import math
 import sys
-from datetime import datetime
 from pathlib import Path
-import openpyxl
-from utils import progressbar, write_to_new_docx
-from constants import get_insurer, resolve_insurer
 
-DATE_FORMAT = "%B %d, %Y"
+import openpyxl
+
+from constants import get_insurer, resolve_insurer
+from utils import (
+    format_amount,
+    load_producer_mapping,
+    parse_date,
+    parse_date_to_dt,
+    progressbar,
+    safe_strip,
+    smart_title,
+    to_float,
+    write_to_new_docx,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.xlsx"
@@ -15,136 +23,6 @@ try:
     sys.stdout.reconfigure(encoding="utf-8")
 except (AttributeError, ValueError):
     pass
-
-
-def safe_strip(value):
-    if value is None:
-        return ""
-    if isinstance(value, float) and math.isnan(value):
-        return ""
-    return str(value).strip()
-
-
-def smart_title(text):
-    """
-    Title-cases words, but leaves a word untouched if:
-      - it contains a digit, or
-      - the NEXT word starts with a digit (so labels like "BCS 3746" stay intact)
-    Certain small words (e.g. "of") are kept lowercase unless they're the first word.
-    """
-    if not text:
-        return text
-
-    lowercase_words = {"of", "the", "and", "a", "an", "in", "on", "for"}
-
-    words = text.split(" ")
-    result = []
-    for i, word in enumerate(words):
-        has_digit = any(ch.isdigit() for ch in word)
-        next_word = words[i + 1] if i + 1 < len(words) else ""
-        next_starts_digit = bool(next_word) and next_word[0].isdigit()
-
-        if has_digit or next_starts_digit:
-            result.append(word)
-        elif word.lower() in lowercase_words and i != 0:
-            result.append(word.lower())
-        else:
-            result.append(word[:1].upper() + word[1:].lower() if word else word)
-    return " ".join(result)
-
-
-def to_float(value):
-    if value is None:
-        return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    s = str(value).strip().replace("$", "").replace(",", "")
-    if not s:
-        return 0.0
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
-
-
-def format_amount(value):
-    """Strips any existing $ / commas and reformats as a plain number string."""
-    if value is None:
-        return ""
-    if isinstance(value, (int, float)):
-        return f"{value:,.2f}"
-    s = str(value).strip().replace("$", "").replace(",", "")
-    if not s:
-        return ""
-    try:
-        return f"{float(s):,.2f}"
-    except ValueError:
-        return s
-
-
-def parse_date(value):
-    if not value:
-        return ""
-    if isinstance(value, datetime):
-        return value.strftime(DATE_FORMAT)
-    value = str(value).strip()
-    date_formats = [
-        "%Y-%m-%d",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-        "%B %d, %Y",
-        "%b %d, %Y",
-        "%d-%b-%y",
-    ]
-    for fmt in date_formats:
-        try:
-            return datetime.strptime(value, fmt).strftime(DATE_FORMAT)
-        except ValueError:
-            continue
-    print(f"\u26a0\ufe0f Could not parse date: {value}")
-    return value
-
-
-def parse_date_to_dt(value):
-    """Same parsing as parse_date, but returns a datetime object (or None)."""
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-    value = str(value).strip()
-    date_formats = [
-        "%Y-%m-%d",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-        "%B %d, %Y",
-        "%b %d, %Y",
-        "%d-%b-%y",
-    ]
-    for fmt in date_formats:
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            continue
-    print(f"\u26a0\ufe0f Could not parse transaction date: {value}")
-    return None
-
-
-def load_producer_mapping(mapping_path):
-    wb = openpyxl.load_workbook(mapping_path, data_only=True)
-    if "File Completion Tool" not in wb.sheetnames:
-        return {}
-    ws = wb["File Completion Tool"]
-    mapping = {}
-    row = 27
-    while True:
-        code = safe_strip(ws.cell(row=row, column=1).value)
-        name = safe_strip(ws.cell(row=row, column=2).value)
-        if not code and not name:
-            break
-        if code:
-            mapping[code.lower()] = name
-        row += 1
-    return mapping
 
 
 def load_transaction_years(mapping_path):
