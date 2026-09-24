@@ -5,6 +5,7 @@ from manual_renewal_letter import manual_renewal_letter
 from sort_renewal_list import sort_renewal_list
 from auto_renewal_letter import auto_renewal_letter
 from create_disclosure_notice import create_disclosure_notice
+from manual_invoice_from_statement import manual_invoice
 
 
 def main():
@@ -25,8 +26,10 @@ def main():
         auto_renewal_letter(config_data)
     elif event == "sort renewal list":
         sort_renewal_list()
-    elif event == "disclosure letter from invoice or statement":
+    elif event == "disclosure letter from invoice or statement (beta)":
         create_disclosure_notice(config_data)
+    elif event == "manual invoice from statement":
+        manual_invoice(config_data)
     else:
         print(f"Unknown event: {event}")
 

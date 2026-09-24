@@ -42,11 +42,11 @@ def load_transaction_years(mapping_path):
     policy number used for the disclosure letter output.
     """
     wb = openpyxl.load_workbook(mapping_path, data_only=True)
-    if "Transactions" not in wb.sheetnames:
-        print("\u274c 'Transactions' sheet not found in config.xlsx")
+    if "DN_Strata_Statements" not in wb.sheetnames:
+        print("\u274c 'DN_Strata_Statements' sheet not found in config.xlsx")
         return {}
 
-    ws = wb["Transactions"]
+    ws = wb["DN_Strata_Statements"]
 
     headers = {}
     for col_idx, cell in enumerate(ws[1], start=1):
@@ -125,11 +125,11 @@ def load_transaction_years(mapping_path):
 
 def read_sheet_rows(mapping_path, producer_mapping):
     wb = openpyxl.load_workbook(mapping_path, data_only=True)
-    if "Disclosure Notice" not in wb.sheetnames:
-        print("\u274c 'Disclosure Notice' sheet not found in config.xlsx")
+    if "DN_Strata_Client_Info" not in wb.sheetnames:
+        print("\u274c 'DN_Strata_Client_Info' sheet not found in config.xlsx")
         return []
 
-    ws = wb["Disclosure Notice"]
+    ws = wb["DN_Strata_Client_Info"]
 
     headers = {}
     for col_idx, cell in enumerate(ws[1], start=1):

@@ -342,9 +342,9 @@ def get_insurer(policy_number):
     if p.startswith("LTRD") or p.startswith("BIND"):
         return "Cansure Insurance Company"
     if p.startswith("VLO"):
-        return "Vailo Insruace Services Ltd."
+        return "Vailo Insurance Services Ltd."
     if p.startswith("50"):
-        return "Intact Specialty Solutions Ltd."
+        return "Intact Insurance Company"
     if p.startswith("00"):
         return "Economical Mutual Insurance Company"
     if len(p) == 8 and p.isdigit() and p[0] in ("3", "4"):

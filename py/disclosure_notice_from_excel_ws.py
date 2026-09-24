@@ -35,11 +35,10 @@ def load_excluded_ccodes(mapping_path):
 
 
 def load_cancelled_ccodes(mapping_path):
-    """Reads cancelled ccodes from the 'no active' worksheet in config.xlsx."""
     wb = openpyxl.load_workbook(mapping_path, data_only=True)
-    if "no active" not in wb.sheetnames:
+    if "DN_Cancelled_Policies" not in wb.sheetnames:
         return set()
-    ws = wb["no active"]
+    ws = wb["DN_Cancelled_Policies"]
     headers = {}
     for col_idx, cell in enumerate(ws[1], start=1):
         header = safe_strip(cell.value).lower()
@@ -68,18 +67,16 @@ def is_row_highlighted(ws, row_idx, check_col=1):
     return str(fg.rgb).upper().endswith("FF6666")
 
 
-def read_filtered_transactions_sheet(mapping_path, producer_mapping, cancelled_ccodes=None):
-    """Reads rows from the 'Filtered Transactions' sheet in config.xlsx.
-
-    Rows highlighted red by mark_cancelled_ccodes.py are marked cancelled.
-    """
+def read_filtered_transactions_sheet(
+    mapping_path, producer_mapping, cancelled_ccodes=None
+):
     cancelled_ccodes = cancelled_ccodes or set()
     wb = openpyxl.load_workbook(mapping_path, data_only=True)
-    if "Filtered Transactions" not in wb.sheetnames:
-        print("\u274c 'Filtered Transactions' sheet not found in config.xlsx")
+    if "DN_Transactions" not in wb.sheetnames:
+        print("\u274c 'DN_Transactions' sheet not found in config.xlsx")
         return []
 
-    ws = wb["Filtered Transactions"]
+    ws = wb["DN_Transactions"]
 
     headers = {}
     for col_idx, cell in enumerate(ws[1], start=1):
@@ -96,7 +93,7 @@ def read_filtered_transactions_sheet(mapping_path, producer_mapping, cancelled_c
     ]
     missing = [c for c in required if c not in headers]
     if missing:
-        print(f"\u274c Missing required columns in Filtered Transactions sheet: {missing}")
+        print(f"\u274c Missing required columns in DN_Transactions sheet: {missing}")
         return []
 
     rows = []
@@ -197,7 +194,6 @@ def read_sheet_rows(source_path, producer_mapping):
 
 
 def disclosure_notice(config_data=None):
-    """Reads from the 'Filtered Transactions' sheet in config.xlsx."""
     mapping_path = "config.xlsx"
     if not Path(mapping_path).exists():
         print("Config file not found: config.xlsx")
@@ -210,7 +206,7 @@ def disclosure_notice(config_data=None):
         mapping_path, producer_mapping, cancelled_ccodes
     )
     if not rows:
-        print("No data found in Filtered Transactions sheet")
+        print("No data found in DN_Transactions sheet")
         return
 
     if excluded_ccodes:
