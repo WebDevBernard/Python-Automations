@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """
-Fill "Manual Invoice Template.pdf" from the Horizon West CUSTOMER STATEMENT
-PDF(s) found among the last 2 modified PDFs in Downloads.
+Fill "Manual Invoice Template.pdf" (Policy + Transactions layout) from the
+Horizon West CUSTOMER STATEMENT PDF(s) found among the last 2 modified PDFs
+in Downloads.
 
 A PDF is only treated as a statement if the words CUSTOMER STATEMENT appear
 inside STATEMENT_RECT on page 1.
+
+Mapping (statement -> invoice):
+    Date            -> Policy "Term From" (Term To = Term From + 1 year);
+                       shown on the first policy row only when all match
+    Transaction     -> Transaction
+    Description     -> Description
+    Amount          -> Amount
+    Policy          -> Policy Number (one policy row per distinct policy)
+    Invoice/Cheque  -> Invoice Number (comma-separated if rows differ)
+    Statement date  -> Invoice Date
 
 Output: Desktop if it exists, otherwise the current working directory.
 
@@ -13,18 +24,23 @@ Output: Desktop if it exists, otherwise the current working directory.
 Usage:
     python manual_invoice_from_statement.py                # normal run
     python manual_invoice_from_statement.py --list-fields  # dump the template's form fields
-    python manual_invoice_from_statement.py --debug        # also print title-region and extracted text
+    python manual_invoice_from_statement.py --debug        # also print parsed data
+    python manual_invoice_from_statement.py --statement S.pdf [--template T.pdf] [--out DIR]
 """
 
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 try:
     import pymupdf
 except ImportError:  # older PyMuPDF versions
     import fitz as pymupdf
+
+from constants import get_insurer
+from utils import unique_file_name
 
 TEMPLATE = Path(r"E:\dev\Python-Automations\py\assets\Manual Invoice Template.pdf")
 DOWNLOADS = Path.home() / "Downloads"
@@ -39,45 +55,39 @@ STATEMENT_RECT = (
 )
 RECT_PAD = 1.5  # small tolerance so glyphs on the edge aren't clipped
 
-# Statement columns, left to right:
-#   Date | Transaction | Invoice/Cheque | Policy | Description | Amount
-ROW_RE = re.compile(
-    r"^(?P<date>\d{2}/\d{2}/\d{4})\s+"
-    r"(?P<transaction>[A-Za-z][A-Za-z ]*?)\s+"
-    r"(?P<invoice>\d{4,7})\s+"
-    r"(?P<policy>[A-Z][A-Z0-9]{6,})\s+"
-    r"(?P<description>.*?)\s*"
-    r"(?P<amount>-?\$?[\d,]+\.\d{2})$"
-)
+# Statement dates look like 05/11/2026. "DMY" reads that as 5 November 2026
+# (a renewal due after the September statement date); use "MDY" for May 11.
+DATE_ORDER = "DMY"
+
+# Template capacity (must match the template's buttons)
+PMAX, TMAX = 5, 10
+KMAX = PMAX + TMAX - 1  # transaction row "slots"
 
 PHONE_RE = re.compile(r"\(\d{3}\)\s*\d{3}-\d{4}")
-# 'VANCOUVER, BC V5R 3J8 WONC05 BY NT PT' -> city line + customer code
+# 'VANCOUVER, BC V5R 3J8 WONC05 BY NT PT' -> city line + customer code line
 CITY_CODE_RE = re.compile(
     r"^(?P<city>.+?[A-Z]\d[A-Z]\s?\d[A-Z]\d)"
     r"(?:\s+(?P<ref>(?P<code>[A-Z]{2,}\d{2,})\b.*))?"
 )
+DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+MONEY_RE = re.compile(r"^-?\$?[\d,]+\.\d{2}$")
 
-# Template form layout: detail rows are date_N, txn_N, ... (N = 1..MAX_ROWS).
-# Rows 2+ start hidden; each row count N has its own 'Invoice Total' group
-# (ob_box_N / ob_label_N / total_N) and only the one for the last row shows.
-MAX_ROWS = 18
-DISPLAY_VISIBLE, DISPLAY_HIDDEN = 0, 1  # Widget.field_display values
-ROW_FIELDS = {
-    "date": "date",
-    "txn": "transaction",
-    "inv": "invoice",
-    "pol": "policy",
-    "desc": "description",
-    "amt": "amount",
-}
+# Statement column headers -> field; data starts a little left of each header
+HEADERS = [  # (header word, key, left margin)
+    ("Transaction", "transaction", 8),
+    ("Invoice", "invoice", 8),
+    ("Policy", "policy", 12),
+    ("Description", "description", 6),
+]
+DEFAULT_BOUNDS = {"transaction": 55, "invoice": 130, "policy": 176, "description": 290}
 
 
 # --------------------------------------------------------------------------- #
 # Statement detection + parsing
 # --------------------------------------------------------------------------- #
-def page_lines(page, ytol: float = 3.0) -> list:
-    """Rebuild visual text lines from words so each table row is one string."""
-    words = sorted(page.get_text("words"), key=lambda w: (w[1] + w[3]) / 2)
+def group_lines(words, ytol: float = 3.0) -> list:
+    """Group words into visual lines (lists of words, left to right)."""
+    words = sorted(words, key=lambda w: (w[1] + w[3]) / 2)
     lines, cur, ref = [], [], 0.0
     for w in words:
         yc = (w[1] + w[3]) / 2
@@ -89,16 +99,10 @@ def page_lines(page, ytol: float = 3.0) -> list:
         cur.append(w)
     if cur:
         lines.append(cur)
-    return [" ".join(w[4] for w in sorted(l, key=lambda w: w[0])) for l in lines]
-
-
-def read_text(path: Path) -> str:
-    with pymupdf.open(path) as doc:
-        return "\n".join("\n".join(page_lines(p)) for p in doc)
+    return [sorted(l, key=lambda w: w[0]) for l in lines]
 
 
 def statement_title_text(path: Path) -> str:
-    """Text found inside STATEMENT_RECT on page 1."""
     x0, y0, x1, y1 = STATEMENT_RECT
     clip = pymupdf.Rect(x0 - RECT_PAD, y0 - RECT_PAD, x1 + RECT_PAD, y1 + RECT_PAD)
     with pymupdf.open(path) as doc:
@@ -112,18 +116,91 @@ def is_customer_statement(path: Path) -> bool:
     return "CUSTOMER STATEMENT" in text
 
 
+def format_name(s: str) -> str:
+    """Client name, formatted like the renewal letter: single spaces, no
+    colons, title case ('SMITH, JOHN & JANE' -> 'Smith, John & Jane')."""
+    return re.sub(r"\s+", " ", s).strip().replace(":", "").title()
+
+
 def money(s: str) -> float:
     return float(s.replace("$", "").replace(",", ""))
 
 
-def parse_statement(text: str) -> dict:
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    flat = "\n".join(lines)
+def parse_date(s: str) -> date:
+    a, b, y = (int(x) for x in s.split("/"))
+    return date(y, b, a) if DATE_ORDER == "DMY" else date(y, a, b)
+
+
+def long_date(d: date) -> str:
+    return f"{d:%B} {d.day}, {d.year}"  # 'November 5, 2026'
+
+
+def plus_one_year(d: date) -> date:
+    try:
+        return d.replace(year=d.year + 1)
+    except ValueError:  # Feb 29 -> Feb 28
+        return d.replace(year=d.year + 1, day=28)
+
+
+def column_bounds(words) -> dict:
+    """Left edge of each column, taken from the table headers."""
+    bounds = dict(DEFAULT_BOUNDS)
+    for word, key, margin in HEADERS:
+        hits = [w for w in words if w[4] == word and 180 < w[1] < 240]
+        if hits:
+            bounds[key] = min(h[0] for h in hits) - margin
+    return bounds
+
+
+def parse_rows(words) -> list:
+    """Transaction rows: any line starting with a dd/dd/yyyy date."""
+    b = column_bounds(words)
+    items = []
+    for line in group_lines(words):
+        if not DATE_RE.match(line[0][4]) or line[0][0] >= b["transaction"]:
+            continue
+        amt_words = [
+            w for w in line if MONEY_RE.match(w[4]) and w[0] > b["description"]
+        ]
+        if not amt_words:
+            continue
+        amt = amt_words[-1]
+        cols = {"transaction": [], "invoice": [], "policy": [], "description": []}
+        for w in line[1:]:
+            if w is amt:
+                continue
+            x = w[0]
+            key = (
+                "description"
+                if x >= b["description"]
+                else (
+                    "policy"
+                    if x >= b["policy"]
+                    else "invoice" if x >= b["invoice"] else "transaction"
+                )
+            )
+            cols[key].append(w[4])
+        items.append(
+            dict(
+                date=parse_date(line[0][4]),
+                amount=money(amt[4]),
+                **{k: " ".join(v) for k, v in cols.items()},
+            )
+        )
+    return items
+
+
+def parse_statement(path: Path) -> dict:
+    with pymupdf.open(path) as doc:
+        items = [i for page in doc for i in parse_rows(page.get_text("words"))]
+        lines = [
+            " ".join(w[4] for w in l) for l in group_lines(doc[0].get_text("words"))
+        ]
+        flat = "\n".join(lines)
 
     m = re.search(r"\b([A-Z][a-z]+ \d{1,2}, \d{4})\b", flat)
     statement_date = m.group(1) if m else ""
 
-    # 'To: <name> (phone)' / street / 'CITY, PR POSTAL CODE ...'
     name = phone = street = city = code = ref = ""
     for i, l in enumerate(lines):
         if not l.startswith("To:"):
@@ -133,44 +210,25 @@ def parse_statement(text: str) -> dict:
         if m:
             phone = m.group(0)
             to_line = to_line[: m.start()] + to_line[m.end() :]
-        name = to_line.strip()
+        name = format_name(to_line)
         if i + 1 < len(lines):
             street = lines[i + 1].rstrip(",")
         if i + 2 < len(lines):
             m = CITY_CODE_RE.match(lines[i + 2])
             if m:
                 city, code = m["city"], m["code"] or ""
-                ref = (m["ref"] or "").strip()  # 'WONC05 BY NT PT'
+                ref = (m["ref"] or "").strip()  # 'SETS01 BY NT PT'
         break
 
     m = re.search(r"Customer Code:\s*(\S+)", flat)
-    if m:
+    if m and not code:
         code = m.group(1)
 
-    items = []
-    for l in lines:
-        r = ROW_RE.match(l)
-        if r:
-            amt = r["amount"] if r["amount"].startswith("$") else "$" + r["amount"]
-            items.append(
-                dict(
-                    date=r["date"],
-                    transaction=r["transaction"].strip(),
-                    invoice=r["invoice"],
-                    policy=r["policy"],
-                    description=r["description"].strip(),
-                    amount=amt,
-                )
-            )
-
     m = re.search(r"Outstanding Balance\s*:\s*(-?\$?[\d,]+\.\d{2})", flat)
-    balance = m.group(1) if m else ""
-    calc = sum(money(i["amount"]) for i in items)
-    if not balance:
-        balance = f"${calc:,.2f}"
-    elif abs(money(balance) - calc) > 0.005:
+    calc = round(sum(i["amount"] for i in items), 2)
+    if m and abs(money(m.group(1)) - calc) > 0.005:
         print(
-            f"  ! Warning: rows sum to ${calc:,.2f} but statement balance is {balance}"
+            f"  ! Warning: rows sum to ${calc:,.2f} but statement balance is {m.group(1)}"
         )
 
     return dict(
@@ -180,140 +238,173 @@ def parse_statement(text: str) -> dict:
         city=city,
         customer_code=code,
         customer_ref=ref or code,
-        invoice_date=statement_date,
-        total=balance,
-        amount_due=balance,
+        statement_date=statement_date,
         items=items,
+        total=calc,
     )
 
 
 # --------------------------------------------------------------------------- #
-# Form field mapping
+# Invoice data
 # --------------------------------------------------------------------------- #
-def number(s: str) -> str:
-    """'$1,182.00' -> '1182.00'. The template's amount/total fields run
-    AFNumber_Format, which shows NaN ('$1.#R') for text containing $ or ,"""
-    return f"{money(s):.2f}"
+def company_for(policy: str) -> str:
+    """Company Name isn't printed on the statement, so derive it from the
+    policy number prefix (rules live in constants.get_insurer). No exact
+    match -> most likely of Wawanesa / Intact / Aviva."""
+    return get_insurer(policy, guess=True)
 
 
-def build_values(data: dict):
-    """Return ({field_name: value}, number_of_rows_used)."""
+def build_invoice(data: dict) -> dict:
     items = data["items"]
-    if len(items) > MAX_ROWS:
+    if len(items) > TMAX:
         print(
-            f"  ! Template only has {MAX_ROWS} rows but statement has "
-            f"{len(items)} lines - extra lines were NOT written."
+            f"  ! Template holds {TMAX} transactions; statement has {len(items)} - extra lines NOT written."
         )
-        items = items[:MAX_ROWS]
-    n_rows = max(len(items), 1)
+        items = items[:TMAX]
 
-    values = {
-        "stmt_date": data["invoice_date"],
-        "cust_name": data["name"],
-        "cust_phone": data["phone"],
-        "cust_addr1": data["street"],
-        "cust_addr2": data["city"],
-        "cust_code": data["customer_ref"],
-        # stub fields are normally copied by JavaScript in Acrobat; set them
-        # directly so they show in every viewer
-        "stub_name": data["name"],
-        "stub_addr1": data["street"],
-        "stub_addr2": data["city"],
-        "stub_code": data["customer_code"],
-        "stub_date": data["invoice_date"],
-        "stub_due": number(data["amount_due"]),
-        f"total_{n_rows}": number(data["total"]),
+    policies = {}  # policy number -> earliest due date, in order of appearance
+    for it in items:
+        p = it["policy"]
+        if p and (p not in policies or it["date"] < policies[p]):
+            policies[p] = it["date"]
+    pol_rows = [
+        dict(company=company_for(p), number=p, term_from=d, term_to=plus_one_year(d))
+        for p, d in policies.items()
+    ]
+    if len(pol_rows) > PMAX:
+        print(
+            f"  ! Template holds {PMAX} policies; statement has {len(pol_rows)} - extra policies NOT written."
+        )
+        pol_rows = pol_rows[:PMAX]
+
+    invoices = list(dict.fromkeys(it["invoice"] for it in items if it["invoice"]))
+    return dict(policies=pol_rows, items=items, invoice_number=", ".join(invoices))
+
+
+def field_values(data: dict, inv: dict) -> dict:
+    """{field: (stored value, text shown)} - numbers are stored bare so the
+    form's own $ formatting and totals keep working in Acrobat."""
+    p, t = max(len(inv["policies"]), 1), max(len(inv["items"]), 1)
+    amt = lambda x: (f"{x:.2f}", f"${x:,.2f}")
+    same = lambda s: (s, s)
+    total = round(sum(i["amount"] for i in inv["items"]), 2)
+    stub_code = data["customer_ref"].split()[0] if data["customer_ref"] else ""
+
+    v = {
+        "inv_num": same(inv["invoice_number"]),
+        "inv_date": same(data["statement_date"]),
+        "cust_name": same(data["name"]),
+        "cust_addr1": same(data["street"]),
+        "cust_addr2": same(data["city"]),
+        "cust_phone": same(data["phone"]),
+        "cust_code": same(data["customer_ref"]),
+        "st_pol": same(str(p)),
+        "st_txn": same(str(t)),
+        f"tot_{p + t - 1}": amt(total),
+        # stub fields are calculated by the form in Acrobat; set them too so
+        # they show in every viewer
+        "stub_name": same(data["name"]),
+        "stub_addr1": same(data["street"]),
+        "stub_addr2": same(data["city"]),
+        "stub_code": same(stub_code),
+        "stub_invnum": same(inv["invoice_number"]),
+        "stub_date": same(data["statement_date"]),
+        "stub_policy": same(", ".join(r["number"] for r in inv["policies"])),
+        "stub_due": amt(total),
     }
-    for r, item in enumerate(items, 1):
-        for prefix, key in ROW_FIELDS.items():
-            v = item[key]
-            values[f"{prefix}_{r}"] = number(v) if key == "amount" else v
-    return values, n_rows
+    # every policy on the same term -> dates only on the first row
+    one_term = len({(r["term_from"], r["term_to"]) for r in inv["policies"]}) == 1
+    for r, pol in enumerate(inv["policies"], 1):
+        v[f"co_{r}"] = same(pol["company"])
+        v[f"pnum_{r}"] = same(pol["number"])
+        if r == 1 or not one_term:
+            v[f"tfrom_{r}"] = same(long_date(pol["term_from"]))
+            v[f"tto_{r}"] = same(long_date(pol["term_to"]))
+    for j, it in enumerate(inv["items"], 1):
+        k = p + j - 1  # transaction row j sits in slot k (see template buttons)
+        v[f"tx_type_{k}"] = same(it["transaction"])
+        v[f"tx_desc_{k}"] = same(it["description"])
+        v[f"tx_amt_{k}"] = amt(it["amount"])
+    return {k: val for k, val in v.items() if val[0] != ""}
 
 
-def row_visibility(n_rows: int) -> dict:
-    """{field_name: visible?} mirroring what the '+ Add Row' button does."""
+def visibility(p: int, t: int) -> dict:
+    """{field: visible?} - the same layout the template's buttons draw."""
     vis = {}
-    for r in range(2, MAX_ROWS + 1):
-        for name in [f"rowbox_{r}", *(f"{p}_{r}" for p in ROW_FIELDS)]:
-            vis[name] = r <= n_rows
-    for r in range(1, MAX_ROWS + 1):
-        for name in (f"ob_box_{r}", f"ob_label_{r}", f"total_{r}"):
-            vis[name] = r == n_rows
+    for r in range(1, PMAX + 1):
+        for f in (
+            "plL",
+            "plR",
+            "plB",
+            "pdiv1",
+            "pdiv2",
+            "pdiv3",
+            "co",
+            "pnum",
+            "tfrom",
+            "tto",
+        ):
+            vis[f"{f}_{r}"] = r <= p
+        for f in (
+            "txh_bg",
+            "txhT",
+            "txhB",
+            "txhL",
+            "txhR",
+            "txh_l1",
+            "txh_l3",
+            "txh_l4",
+        ):
+            vis[f"{f}_{r}"] = r == p
+    for k in range(1, KMAX + 1):
+        for f in ("tlL", "tlR", "tlB", "tx_type", "tx_desc", "tx_amt"):
+            vis[f"{f}_{k}"] = p <= k <= p + t - 1
+        vis[f"tot_lbl_{k}"] = vis[f"tot_{k}"] = k == p + t - 1
     return vis
 
 
-def use_standard_form_fonts(doc):
-    """Point the form's Helv/HeBo at the standard Helvetica fonts.
-
-    The template's /DR fonts are embedded Arial subsets, and with
-    NeedAppearances on, viewers redraw fields with them - any letter missing
-    from the subset vanishes (e.g. 'WONC05' losing letters)."""
-    cat = doc.pdf_catalog()
-    refs = []
-    for name, base in (("Helv", "Helvetica"), ("HeBo", "Helvetica-Bold")):
-        xref = doc.get_new_xref()
-        doc.update_object(
-            xref,
-            f"<</Type/Font/Subtype/Type1/BaseFont/{base}/Encoding/WinAnsiEncoding>>",
-        )
-        refs.append(f"/{name} {xref} 0 R")
-    doc.xref_set_key(cat, "AcroForm/DR/Font", f"<<{''.join(refs)}>>")
-    # let the viewer redraw fields so its $ formatting scripts apply
-    doc.xref_set_key(cat, "AcroForm/NeedAppearances", "true")
-
-
-def scoped_js(js: str) -> str:
-    """Run a form script in its own function scope.
-
-    Some viewers share one global scope between scripts, so the Remove Row
-    loop's 'i' got overwritten by the total calculation (also 'var i') that
-    fires when a cell is cleared - only one cell was removed per click."""
-    body = re.sub(r"\bthis\b", "doc", js)
-    return f"(function(doc){{{body}}})(this);"
-
-
-def fill(template: Path, out_path: Path, data: dict):
-    values, n_rows = build_values(data)
-    vis = row_visibility(n_rows)
+# --------------------------------------------------------------------------- #
+# Filling
+# --------------------------------------------------------------------------- #
+def fill(template: Path, out_path: Path, data: dict, inv: dict):
+    values = field_values(data, inv)
+    vis = visibility(max(len(inv["policies"]), 1), max(len(inv["items"]), 1))
     with pymupdf.open(template) as doc:
+        cat = doc.pdf_catalog()
+        hebo = doc.xref_get_key(cat, "AcroForm/DR/Font/HeBo")[1]
         for page in doc:
+            # 1) values: generate the visible text, then store the bare value
             for w in page.widgets():
-                name = w.field_name
-                changed = False
-                if name in ("btn_add", "btn_remove") and w.script:
-                    w.script = scoped_js(w.script)
-                    changed = True
-                if w.script_calc and "for(" in w.script_calc:
-                    w.script_calc = scoped_js(w.script_calc)
-                    changed = True
-                if name in vis:
-                    w.field_display = DISPLAY_VISIBLE if vis[name] else DISPLAY_HIDDEN
-                    changed = True
-                if name in values:
-                    w.field_value = values[name]
-                    changed = True
-                if changed:
-                    # update() forces the font to plain Helv (PyMuPDF has no
-                    # bold field font) - put the original bold DA back
-                    da = doc.xref_get_key(w.xref, "DA")[1]
-                    w.update()
-                    if "/HeBo" in da:
-                        doc.xref_set_key(w.xref, "DA", pymupdf.get_pdf_str(da))
-        use_standard_form_fonts(doc)
-        doc.save(out_path)
+                if w.field_name not in values:
+                    continue
+                stored, shown = values[w.field_name]
+                da = doc.xref_get_key(w.xref, "DA")[1]
+                w.field_value = shown
+                w.update()
+                doc.xref_set_key(w.xref, "V", pymupdf.get_pdf_str(stored))
+                if "/HeBo" in da:  # update() switches to plain Helv; restore bold
+                    doc.xref_set_key(w.xref, "DA", pymupdf.get_pdf_str(da))
+                    ap = int(doc.xref_get_key(w.xref, "AP/N")[1].split()[0])
+                    doc.update_stream(
+                        ap, doc.xref_stream(ap).replace(b"/Helv", b"/HeBo")
+                    )
+                    doc.xref_set_key(ap, "Resources/Font/HeBo", hebo)
+            # 2) show/hide rows by annotation flag only (keeps the drawn table lines intact)
+            for w in page.widgets():
+                if w.field_name in vis:
+                    doc.xref_set_key(w.xref, "F", "4" if vis[w.field_name] else "2")
+        doc.save(out_path, garbage=3, deflate=True)
 
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def list_fields():
-    with pymupdf.open(TEMPLATE) as doc:
+def list_fields(template: Path):
+    with pymupdf.open(template) as doc:
         for pno, page in enumerate(doc, 1):
-            widgets = sorted(
+            for w in sorted(
                 page.widgets(), key=lambda w: (round(w.rect.y0), w.rect.x0)
-            )
-            for w in widgets:
+            ):
                 print(
                     f"p{pno}  x={w.rect.x0:6.1f} y={w.rect.y0:6.1f}  "
                     f"{w.field_type_string:<9} {w.field_name!r}  value={w.field_value!r}"
@@ -327,52 +418,67 @@ def output_dir() -> Path:
     return Path.cwd()
 
 
-def unique_path(p: Path) -> Path:
-    if not p.exists():
-        return p
-    i = 2
-    while (q := p.with_name(f"{p.stem} ({i}){p.suffix}")).exists():
-        i += 1
-    return q
-
-
-def manual_invoice(config_data=None, debug: bool = False) -> int:
+def manual_invoice(
+    config_data=None,
+    debug: bool = False,
+    statements=None,
+    template: Path = TEMPLATE,
+    out_dir: Path = None,
+) -> int:
     """Entry point for file_completion_tool. Returns the number of invoices made."""
-    if not TEMPLATE.is_file():
-        print(f"Template not found: {TEMPLATE}")
+    if not template.is_file():
+        print(f"Template not found: {template}")
         return 0
 
-    pdfs = sorted(
-        DOWNLOADS.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
-    pdfs = pdfs[:SCAN_COUNT]
+    if statements:
+        pdfs = [Path(s) for s in statements]
+    else:
+        pdfs = sorted(
+            DOWNLOADS.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True
+        )[:SCAN_COUNT]
     if not pdfs:
         print(f"No PDFs in {DOWNLOADS}")
         return 0
 
-    out_dir = output_dir()
+    out_dir = out_dir or output_dir()
     made = 0
     for pdf in pdfs:
         if debug:
-            print(f"----- {pdf.name} -----")
-            print(f"Title region text: {statement_title_text(pdf)!r}")
+            print(
+                f"----- {pdf.name} -----\nTitle region text: {statement_title_text(pdf)!r}"
+            )
         if not is_customer_statement(pdf):
             print(f"Skipping {pdf.name} (no 'CUSTOMER STATEMENT' in title area)")
             continue
 
-        text = read_text(pdf)
-        if debug:
-            print(f"{text}\n")
-
         print(f"Processing {pdf.name}")
-        data = parse_statement(text)
+        data = parse_statement(pdf)
         if not data["items"]:
             print("  ! No transaction lines parsed - try --debug")
             continue
+        inv = build_invoice(data)
+        if debug:
+            for k in (
+                "name",
+                "phone",
+                "street",
+                "city",
+                "customer_ref",
+                "statement_date",
+            ):
+                print(f"  {k}: {data[k]!r}")
+            for pol in inv["policies"]:
+                print(f"  policy: {pol}")
+            for it in inv["items"]:
+                print(f"  item: {it}")
 
         client = re.sub(r'[\\/:*?"<>|]', "", data["name"]).strip()
-        out = unique_path(out_dir / f"{client or 'Unknown Client'} Invoice.pdf")
-        fill(TEMPLATE, out, data)
+        out = Path(
+            unique_file_name(
+                str(Path(out_dir) / f"{client or 'Unknown Client'} Invoice.pdf")
+            )
+        )
+        fill(template, out, data, inv)
         print(f"  -> {out}")
         made += 1
 
@@ -380,8 +486,7 @@ def manual_invoice(config_data=None, debug: bool = False) -> int:
         print(f"\nCreated {made} invoice(s) in {out_dir}")
     else:
         print(
-            "No customer statement found among the last "
-            f"{SCAN_COUNT} modified PDFs in {DOWNLOADS}"
+            f"No customer statement found among the last {SCAN_COUNT} modified PDFs in {DOWNLOADS}"
         )
     return made
 
@@ -390,11 +495,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list-fields", action="store_true")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument(
+        "--statement", nargs="+", help="statement PDF(s) instead of scanning Downloads"
+    )
+    ap.add_argument("--template", type=Path, default=TEMPLATE)
+    ap.add_argument("--out", type=Path, help="output folder (default: Desktop)")
     args = ap.parse_args()
 
     if args.list_fields:
-        return list_fields()
-    if not manual_invoice(debug=args.debug):
+        return list_fields(args.template)
+    if not manual_invoice(
+        debug=args.debug,
+        statements=args.statement,
+        template=args.template,
+        out_dir=args.out,
+    ):
         sys.exit(1)
 
 

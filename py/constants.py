@@ -324,32 +324,91 @@ RECTS = {
 
 
 # --------------- INSURER NAMES -----------------
-def get_insurer(policy_number):
-    """Determines insurer based on policy number pattern:
-    - Starts with GR or GC          -> Gore Mutual
-    - Starts with VLO               -> Vailo
-    - Starts with 50                -> Intact
-    - Starts with 00                -> Economical
-    - 8 digits, starts with 3 or 4  -> Wawanesa
-    """
+# Policy number -> insurer, tried in order (first match wins). Patterns were
+# derived from the policy_number/insurer columns of config.xlsx
+# DN_Transactions; examples are in the comments. Prefixes shared by more
+# than one insurer (SEL, QA, bare P + digits) are left out on purpose.
+INSURER_RULES = [
+    (r"^\d-\d{3}-\d{6,7}$", "Family Insurance"),  # 4-984-1234567
+    (r"^RG.*BC$", "Reliance Glass"),  # RG0130997BC
+    (r"^K.*H$", "Intact Insurance Company"),  # KR54LL928H
+    (r"^4[A-Z]\d+H$", "Intact Insurance Company"),  # 4M1234567H
+    (r"^G[RC]\d", "Gore Mutual Insurance Company"),  # GR8695276181
+    (r"^VLO", "Vailo Insurance Services Ltd."),  # VLO-HAB-12345678
+    (r"^(LTRD|BIND)", "Cansure Insurance Company"),
+    (r"^CS\d{6}$", "Cansure Insurance Company"),  # CS604841
+    (r"^(WDD|EWL|ADH)\d{7}$", "Cansure Insurance Company"),  # WDD3714768
+    (r"^10\d{8}$", "Cansure Insurance Company"),  # 1000008907
+    (r"^[59]\d{6}$", "Cansure Insurance Company"),  # 9023222, 5518210
+    (r"^0[12]\d{6}$", "Cansure Insurance Company"),  # 01xxxxxx
+    (r"^01\d{5}$", "Drivesure Insurance Services Canada Ltd."),  # 0143009
+    (r"^P\d{8}[A-Z]{3}$", "Aviva Insurance"),  # P12759130HAB
+    (r"^S\d{7}$", "Aviva Insurance"),  # S1598734
+    (r"^(CPH|COM)\d{9}$", "Royal & Sun Alliance Insurance Company"),
+    (r"^(MOT|SNO)\d", "Beacon Underwriting Ltd."),
+    (r"^SWG\d", "South Western Insurance Group"),
+    (r"^SGC\d", "Signature Risk Partners Inc."),
+    (r"^GUARD", "Guardian Risk Managers"),
+    (r"^AUS\d", "Agile Underwriting Solutions"),
+    (r"^(INSL|IBC|WAT|HV)\d", "InsureBC Underwriting Services Inc"),
+    (r"^E\d{7}$", "InsureBC Underwriting Services Inc"),  # E0001520
+    (r"^A\d{6}$", "InsureBC Underwriting Services Inc"),  # A103296
+    (r"^(WML|ESM)\d", "Western Underwriting Managers Ltd."),
+    (r"^WGL\d", "PAL Insurance Brokers Canada Ltd."),
+    (r"^SPG\d", "SPG Canada"),
+    (r"^SOP\d", "Totten Group Insurance"),
+    (r"^CSD-?\d", "Chutter Underwriting Services"),  # CSD-084516
+    (r"^C[VT]\d{6,7}$", "Forward Insurance Managers Ltd."),  # CV1234567
+    (
+        r"^(RRB|CND|MERC|CBO|VRB|STR|SRA|IFT|MPP)\d",
+        "Forward Insurance Managers Ltd.",
+    ),
+    (r"^S[RHPS]\d{6}$", "Special Risk Insurance Managers Ltd."),  # SR068845
+    (r"^GLL\d", "Special Risk Insurance Managers Ltd."),
+    (r"^W\d{8}[A-Z]$", "Beazley Canada Limited"),  # W15306121A
+    (r"^B\d{9}[A-Z]\d{2}[A-Z]$", "Burns & Wilcox Canada, ULC"),
+    (r"^B\d{4}[A-Z]{2}\d{7}$", "Burns & Wilcox Canada, ULC"),  # B0142BL2606236
+    (r"^(DN|IL|RA)\d{5}-\d$", "Premier Canada Assurance Managers Ltd."),
+    (r"^(ST|EL)\d{5}$", "Premier Canada Assurance Managers Ltd."),  # ST03767
+    # Intact numbers sometimes carry a trailing H (e.g. KR54LL928H)
+    (r"^5[01]\d{7}H?$", "Intact Insurance Company"),  # 501234567 (9 digits)
+    (r"^5[01](?=[0-9A-Z]{6,7}$)\d*[A-Z]", "Intact Insurance Company"),  # 50123RLNS
+    (r"^[45][A-Z][0-9A-Z]{7}H?$", "Intact Insurance Company"),  # 4M1234567
+    (r"^K[A-Z]\d{2}[A-Z]{2}\d{3}H?$", "Intact Insurance Company"),  # KR54LL928H
+    (r"^(AA|AT|CO|CN)\d{7}H?$", "Intact Insurance Company"),  # AA2331869
+    (r"^[49]\d{8}H?$", "Intact Insurance Company"),  # 917045751
+    (r"^00\d", "Economical Mutual Insurance Company"),  # 004983689
+    (r"^04\d{7}$", "Economical Mutual Insurance Company"),  # 040287175
+    (r"^48\d{5}$", "Economical Mutual Insurance Company"),  # 4860489
+    (r"^[2-5]\d{7}$", "Wawanesa Mutual Insurance Company"),  # 38123456
+]
+INSURER_RULES = [(re.compile(p), name) for p, name in INSURER_RULES]
+
+# Best guess when no INSURER_RULES entry matches. Wawanesa, Intact and Aviva
+# are ~60% of DN_Transactions, so an unknown number goes to whichever of the
+# three it looks most like.
+LIKELY_INSURER_RULES = [
+    (r"^\d{8}$", "Wawanesa Mutual Insurance Company"),  # 494 of 507 8-digit rows
+    (r"^[A-Z]\d+[A-Z]{3}$", "Aviva Insurance"),  # P12759130HAB
+    (r"^P\d", "Aviva Insurance"),
+    (r"^\d+$", "Wawanesa Mutual Insurance Company"),  # other all-digit numbers
+    (r".", "Intact Insurance Company"),  # anything else (mostly 9-char alphanumeric)
+]
+LIKELY_INSURER_RULES = [(re.compile(p), name) for p, name in LIKELY_INSURER_RULES]
+
+
+def get_insurer(policy_number, guess=False):
+    """Determines insurer from the policy number using INSURER_RULES.
+    Returns "" when no rule matches, unless guess=True, in which case the
+    most likely of Wawanesa / Intact / Aviva is returned instead."""
     if not policy_number:
         return ""
 
     p = str(policy_number).strip().upper()
-
-    if p.startswith("GR") or p.startswith("GC"):
-        return "Gore Mutual Insurance Company"
-    if p.startswith("LTRD") or p.startswith("BIND"):
-        return "Cansure Insurance Company"
-    if p.startswith("VLO"):
-        return "Vailo Insurance Services Ltd."
-    if p.startswith("50"):
-        return "Intact Insurance Company"
-    if p.startswith("00"):
-        return "Economical Mutual Insurance Company"
-    if len(p) == 8 and p.isdigit() and p[0] in ("3", "4"):
-        return "Wawanesa Mutual Insurance Company"
-
+    rules = INSURER_RULES + LIKELY_INSURER_RULES if guess else INSURER_RULES
+    for rx, name in rules:
+        if rx.search(p):
+            return name
     return ""
 
 
