@@ -44,6 +44,9 @@ from utils import unique_file_name
 
 TEMPLATE = Path(r"E:\dev\Python-Automations\py\assets\Manual Invoice Template.pdf")
 DOWNLOADS = Path.home() / "Downloads"
+# Prefix of the editable invoice's file name. When printing the final PDF, click
+# this file in the Save dialog and delete the tag -> '<Insured> Invoice.pdf'.
+FILE_TAG = "_"
 SCAN_COUNT = 2
 
 # (x0, y0, x1, y1) in points, top-left origin (PyMuPDF convention)
@@ -62,15 +65,17 @@ DATE_ORDER = "DMY"
 # Template capacity (must match the template's buttons)
 PMAX, TMAX = 5, 10
 KMAX = PMAX + TMAX - 1  # transaction row "slots"
+ADDR_LINES = 3  # cust_addr1..3 / stub_addr1..3 (name is a 4th line above them)
+FIT_SLOTS = 8  # 18pt rows: totals below slot 8 run into 'Thank you for your Business'
 
 PHONE_RE = re.compile(r"\(\d{3}\)\s*\d{3}-\d{4}")
-# 'VANCOUVER, BC V5R 3J8 WONC05 BY NT PT' -> city line + customer code line
-CITY_CODE_RE = re.compile(
-    r"^(?P<city>.+?[A-Z]\d[A-Z]\s?\d[A-Z]\d)"
-    r"(?:\s+(?P<ref>(?P<code>[A-Z]{2,}\d{2,})\b.*))?"
-)
+POSTAL_RE = re.compile(r"[A-Z]\d[A-Z]\s?\d[A-Z]\d$")  # ends the address block
+# Words in the To: block right of this x are the right column (phone,
+# 'ABCD01 BY NT PT'), not the address. That column can sit on any address line.
+RIGHT_COL_X = 400
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
-MONEY_RE = re.compile(r"^-?\$?[\d,]+\.\d{2}$")
+MONEY = r"-?\$?-?[\d,]+\.\d{2}"  # also '$-4,829.00' (payments)
+MONEY_RE = re.compile(rf"^{MONEY}$")
 
 # Statement column headers -> field; data starts a little left of each header
 HEADERS = [  # (header word, key, left margin)
@@ -118,8 +123,20 @@ def is_customer_statement(path: Path) -> bool:
 
 def format_name(s: str) -> str:
     """Client name, formatted like the renewal letter: single spaces, no
-    colons, title case ('SMITH, JOHN & JANE' -> 'Smith, John & Jane')."""
-    return re.sub(r"\s+", " ", s).strip().replace(":", "").title()
+    colons, title case ('SMITH, JOHN & JANE' -> 'Smith, John & Jane').
+    Words with digits aren't title cased: ordinals go lower case ('60TH' -> '60th'),
+    anything else keeps its case ('ABC12345', '0123456BC')."""
+
+    def word(w: str) -> str:
+        if w.upper() == "BC":  # '0123456 BC Ltd'
+            return "BC"
+        if not re.search(r"\d", w):
+            return w.title()
+        return re.sub(
+            r"(\d)(ST|ND|RD|TH)\b", lambda m: m[1] + m[2].lower(), w, flags=re.I
+        )
+
+    return " ".join(word(w) for w in s.replace(":", "").split())
 
 
 def money(s: str) -> float:
@@ -193,38 +210,45 @@ def parse_rows(words) -> list:
 def parse_statement(path: Path) -> dict:
     with pymupdf.open(path) as doc:
         items = [i for page in doc for i in parse_rows(page.get_text("words"))]
-        lines = [
-            " ".join(w[4] for w in l) for l in group_lines(doc[0].get_text("words"))
-        ]
-        flat = "\n".join(lines)
+        word_lines = group_lines(doc[0].get_text("words"))
+    join = lambda ws: " ".join(w[4] for w in ws)
+    lines = [join(l) for l in word_lines]
+    flat = "\n".join(lines)
 
     m = re.search(r"\b([A-Z][a-z]+ \d{1,2}, \d{4})\b", flat)
     statement_date = m.group(1) if m else ""
 
-    name = phone = street = city = code = ref = ""
+    name = phone = code = ref = ""
+    address = []  # up to ADDR_LINES lines under the name; the last one holds the postal code
     for i, l in enumerate(lines):
         if not l.startswith("To:"):
             continue
-        to_line = l[3:]
-        m = PHONE_RE.search(to_line)
+        block = word_lines[i : i + 1 + ADDR_LINES]
+        left = [join(w for w in ws if w[0] < RIGHT_COL_X) for ws in block]
+        right = " ".join(join(w for w in ws if w[0] >= RIGHT_COL_X) for ws in block)
+        m = PHONE_RE.search(right)
         if m:
             phone = m.group(0)
-            to_line = to_line[: m.start()] + to_line[m.end() :]
-        name = format_name(to_line)
-        if i + 1 < len(lines):
-            street = lines[i + 1].rstrip(",")
-        if i + 2 < len(lines):
-            m = CITY_CODE_RE.match(lines[i + 2])
-            if m:
-                city, code = m["city"], m["code"] or ""
-                ref = (m["ref"] or "").strip()  # 'SETS01 BY NT PT'
+            right = right[: m.start()] + right[m.end() :]
+        ref = " ".join(right.split())  # 'ABCD01 BY NT PT'
+        code = ref.split()[0] if ref else ""
+        name = format_name(left[0][3:])
+        for l in left[1:]:
+            if not l:
+                break
+            address.append(l.rstrip(","))
+            if POSTAL_RE.search(l):
+                break
+        else:  # no postal code line found - keep the old street + city layout
+            address = address[:2]
         break
+    address += [""] * (ADDR_LINES - len(address))
 
     m = re.search(r"Customer Code:\s*(\S+)", flat)
     if m and not code:
         code = m.group(1)
 
-    m = re.search(r"Outstanding Balance\s*:\s*(-?\$?[\d,]+\.\d{2})", flat)
+    m = re.search(rf"Outstanding Balance\s*:\s*({MONEY})", flat)
     calc = round(sum(i["amount"] for i in items), 2)
     if m and abs(money(m.group(1)) - calc) > 0.005:
         print(
@@ -234,8 +258,7 @@ def parse_statement(path: Path) -> dict:
     return dict(
         name=name,
         phone=phone,
-        street=street,
-        city=city,
+        address=address,
         customer_code=code,
         customer_ref=ref or code,
         statement_date=statement_date,
@@ -255,7 +278,8 @@ def company_for(policy: str) -> str:
 
 
 def build_invoice(data: dict) -> dict:
-    items = data["items"]
+    # rows without an invoice number (payments etc.) aren't billed
+    items = [it for it in data["items"] if it["invoice"]]
     if len(items) > TMAX:
         print(
             f"  ! Template holds {TMAX} transactions; statement has {len(items)} - extra lines NOT written."
@@ -268,7 +292,7 @@ def build_invoice(data: dict) -> dict:
         if p and (p not in policies or it["date"] < policies[p]):
             policies[p] = it["date"]
     pol_rows = [
-        dict(company=company_for(p), number=p, term_from=d, term_to=plus_one_year(d))
+        dict(company=company_for(p).upper(), number=p, term_from=d, term_to=plus_one_year(d))
         for p, d in policies.items()
     ]
     if len(pol_rows) > PMAX:
@@ -276,6 +300,11 @@ def build_invoice(data: dict) -> dict:
             f"  ! Template holds {PMAX} policies; statement has {len(pol_rows)} - extra policies NOT written."
         )
         pol_rows = pol_rows[:PMAX]
+    if max(len(pol_rows), 1) + len(items) - 1 > FIT_SLOTS:
+        print(
+            f"  ! {len(pol_rows)} policies + {len(items)} transactions is more than fits "
+            f"({FIT_SLOTS + 1} rows) - the total will overlap the footer, check the invoice."
+        )
 
     invoices = list(dict.fromkeys(it["invoice"] for it in items if it["invoice"]))
     return dict(policies=pol_rows, items=items, invoice_number=", ".join(invoices))
@@ -285,7 +314,7 @@ def field_values(data: dict, inv: dict) -> dict:
     """{field: (stored value, text shown)} - numbers are stored bare so the
     form's own $ formatting and totals keep working in Acrobat."""
     p, t = max(len(inv["policies"]), 1), max(len(inv["items"]), 1)
-    amt = lambda x: (f"{x:.2f}", f"${x:,.2f}")
+    amt = lambda x: (f"{x:.2f}", f"{'-' if x < 0 else ''}${abs(x):,.2f}")
     same = lambda s: (s, s)
     total = round(sum(i["amount"] for i in inv["items"]), 2)
     stub_code = data["customer_ref"].split()[0] if data["customer_ref"] else ""
@@ -294,9 +323,6 @@ def field_values(data: dict, inv: dict) -> dict:
         "inv_num": same(inv["invoice_number"]),
         "inv_date": same(data["statement_date"]),
         "cust_name": same(data["name"]),
-        "cust_addr1": same(data["street"]),
-        "cust_addr2": same(data["city"]),
-        "cust_phone": same(data["phone"]),
         "cust_code": same(data["customer_ref"]),
         "st_pol": same(str(p)),
         "st_txn": same(str(t)),
@@ -304,14 +330,14 @@ def field_values(data: dict, inv: dict) -> dict:
         # stub fields are calculated by the form in Acrobat; set them too so
         # they show in every viewer
         "stub_name": same(data["name"]),
-        "stub_addr1": same(data["street"]),
-        "stub_addr2": same(data["city"]),
         "stub_code": same(stub_code),
         "stub_invnum": same(inv["invoice_number"]),
         "stub_date": same(data["statement_date"]),
         "stub_policy": same(", ".join(r["number"] for r in inv["policies"])),
         "stub_due": amt(total),
     }
+    for n, line in enumerate(data["address"], 1):
+        v[f"cust_addr{n}"] = v[f"stub_addr{n}"] = same(line)
     # every policy on the same term -> dates only on the first row
     one_term = len({(r["term_from"], r["term_to"]) for r in inv["policies"]}) == 1
     for r, pol in enumerate(inv["policies"], 1):
@@ -338,7 +364,6 @@ def visibility(p: int, t: int) -> dict:
             "plB",
             "pdiv1",
             "pdiv2",
-            "pdiv3",
             "co",
             "pnum",
             "tfrom",
@@ -366,29 +391,90 @@ def visibility(p: int, t: int) -> dict:
 # --------------------------------------------------------------------------- #
 # Filling
 # --------------------------------------------------------------------------- #
+# Invoice / policy numbers get two single-line rows: (1st row, 2nd row) fields.
+# Numbers only move to the 2nd row whole, after a comma.
+NUMBER_ROWS = {
+    "inv_num": ("inv_num", "inv_num2"),
+    "stub_invnum": ("stub_invnum", "stub_invnum2"),
+    "stub_policy": ("stub_policy", "stub_policy2"),
+}
+
+
+def split_numbers(text: str, w1: float, w2: float, size: float = 9):
+    """Split 'a, b, c' into two rows of widths w1/w2 without breaking a number
+    (same rule as the stub's Acrobat script). Shrinks the font only if two rows
+    at `size` aren't enough. Returns (font size, row 1, row 2)."""
+    parts = [p for p in re.split(r",\s*", text.strip()) if p]
+    s = size
+    while True:
+        width = lambda t: pymupdf.get_text_length(t, fontname="helv", fontsize=s)
+        first = []
+        for p in parts:
+            cand = first + [p]
+            more = "," if len(cand) < len(parts) else ""
+            if first and width(", ".join(cand) + more) > w1 - 4:
+                break
+            first = cand
+        row2 = ", ".join(parts[len(first) :])
+        row1 = ", ".join(first) + ("," if row2 else "")
+        if (width(row1) <= w1 - 4 and width(row2) <= w2 - 4) or s <= 5:
+            return s, row1, row2
+        s -= 0.25
+
+
 def fill(template: Path, out_path: Path, data: dict, inv: dict):
     values = field_values(data, inv)
     vis = visibility(max(len(inv["policies"]), 1), max(len(inv["items"]), 1))
     with pymupdf.open(template) as doc:
         cat = doc.pdf_catalog()
         hebo = doc.xref_get_key(cat, "AcroForm/DR/Font/HeBo")[1]
+        helv = doc.xref_get_key(cat, "AcroForm/DR/Font/Helv")[1]
         for page in doc:
+            # 0) invoice / policy numbers: split over their two rows (after commas)
+            rects = {w.field_name: w.rect for w in page.widgets()}
+            sizes = {}
+            for key, (f1, f2) in NUMBER_ROWS.items():
+                if key not in values or f2 not in rects:
+                    continue
+                src = "inv_num" if key == "stub_invnum" else key  # stub mirrors the top rows
+                s, row1, row2 = split_numbers(
+                    values[key][1], rects[src].width, rects[NUMBER_ROWS[src][1]].width
+                )
+                for f, row in ((f1, row1), (f2, row2)):
+                    values[f] = (row, row)
+                    sizes[f] = s
             # 1) values: generate the visible text, then store the bare value
             for w in page.widgets():
                 if w.field_name not in values:
                     continue
                 stored, shown = values[w.field_name]
                 da = doc.xref_get_key(w.xref, "DA")[1]
+                font = "hebo" if "/HeBo" in da else "helv"
+                size = sizes.get(w.field_name, w.text_fontsize)
+                # single-line fields: shrink the font until the text fits
+                while (
+                    size > 5
+                    and pymupdf.get_text_length(shown, fontname=font, fontsize=size)
+                    > w.rect.width - 4
+                ):
+                    size -= 0.25
+                if size != w.text_fontsize:
+                    w.text_fontsize = size
+                    da = re.sub(r"[\d.]+ Tf", f"{size:g} Tf", da)
+                if shown == "":
+                    continue  # e.g. unused 2nd row
                 w.field_value = shown
                 w.update()
                 doc.xref_set_key(w.xref, "V", pymupdf.get_pdf_str(stored))
+                ap = int(doc.xref_get_key(w.xref, "AP/N")[1].split()[0])
                 if "/HeBo" in da:  # update() switches to plain Helv; restore bold
                     doc.xref_set_key(w.xref, "DA", pymupdf.get_pdf_str(da))
-                    ap = int(doc.xref_get_key(w.xref, "AP/N")[1].split()[0])
                     doc.update_stream(
                         ap, doc.xref_stream(ap).replace(b"/Helv", b"/HeBo")
                     )
                     doc.xref_set_key(ap, "Resources/Font/HeBo", hebo)
+                # use the form's font (Arial), not PyMuPDF's own Helvetica
+                doc.xref_set_key(ap, "Resources/Font/Helv", helv)
             # 2) show/hide rows by annotation flag only (keeps the drawn table lines intact)
             for w in page.widgets():
                 if w.field_name in vis:
@@ -457,12 +543,14 @@ def manual_invoice(
             print("  ! No transaction lines parsed - try --debug")
             continue
         inv = build_invoice(data)
+        if not inv["items"]:
+            print("  ! No transaction lines with an invoice number - skipped")
+            continue
         if debug:
             for k in (
                 "name",
                 "phone",
-                "street",
-                "city",
+                "address",
                 "customer_ref",
                 "statement_date",
             ):
@@ -475,7 +563,10 @@ def manual_invoice(
         client = re.sub(r'[\\/:*?"<>|]', "", data["name"]).strip()
         out = Path(
             unique_file_name(
-                str(Path(out_dir) / f"{client or 'Unknown Client'} Invoice.pdf")
+                str(
+                    Path(out_dir)
+                    / f"{FILE_TAG}{client or 'Unknown Client'} Invoice.pdf"
+                )
             )
         )
         fill(template, out, data, inv)
