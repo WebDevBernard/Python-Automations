@@ -17,6 +17,9 @@ Mapping (statement -> invoice):
     Invoice/Cheque  -> Invoice Number (comma-separated if rows differ)
     Statement date  -> Invoice Date
 
+The optional Risk Location table above the policies (0..LMAX rows) is left
+empty (0 locations); add rows with the template's '+ Add Risk Location' button.
+
 Output: Desktop if it exists, otherwise the current working directory.
 
     pip install pymupdf
@@ -42,7 +45,7 @@ except ImportError:  # older PyMuPDF versions
 from constants import get_insurer
 from utils import unique_file_name
 
-TEMPLATE = Path(r"E:\dev\Python-Automations\py\assets\Manual Invoice Template.pdf")
+TEMPLATE = Path.cwd() / "assets" / "Manual Invoice Template.pdf"
 DOWNLOADS = Path.home() / "Downloads"
 # Prefix of the editable invoice's file name. When printing the final PDF, click
 # this file in the Save dialog and delete the tag -> '<Insured> Invoice.pdf'.
@@ -63,10 +66,10 @@ RECT_PAD = 1.5  # small tolerance so glyphs on the edge aren't clipped
 DATE_ORDER = "DMY"
 
 # Template capacity (must match the template's buttons)
-PMAX, TMAX = 5, 10
-KMAX = PMAX + TMAX - 1  # transaction row "slots"
+PMAX, TMAX, LMAX = 5, 10, 3
+SMAX = PMAX + LMAX + 1  # policy row "slots" (the Location table pushes rows down)
+KMAX = PMAX + TMAX + LMAX  # transaction row "slots"
 ADDR_LINES = 3  # cust_addr1..3 / stub_addr1..3 (name is a 4th line above them)
-FIT_SLOTS = 8  # 18pt rows: totals below slot 8 run into 'Thank you for your Business'
 
 PHONE_RE = re.compile(r"\(\d{3}\)\s*\d{3}-\d{4}")
 POSTAL_RE = re.compile(r"[A-Z]\d[A-Z]\s?\d[A-Z]\d$")  # ends the address block
@@ -277,7 +280,8 @@ def company_for(policy: str) -> str:
     return get_insurer(policy, guess=True)
 
 
-def build_invoice(data: dict) -> dict:
+def build_invoice(data: dict, locations=None) -> dict:
+    """locations: optional risk addresses for the Location table (up to LMAX)."""
     # rows without an invoice number (payments etc.) aren't billed
     items = [it for it in data["items"] if it["invoice"]]
     if len(items) > TMAX:
@@ -300,20 +304,28 @@ def build_invoice(data: dict) -> dict:
             f"  ! Template holds {PMAX} policies; statement has {len(pol_rows)} - extra policies NOT written."
         )
         pol_rows = pol_rows[:PMAX]
-    if max(len(pol_rows), 1) + len(items) - 1 > FIT_SLOTS:
-        print(
-            f"  ! {len(pol_rows)} policies + {len(items)} transactions is more than fits "
-            f"({FIT_SLOTS + 1} rows) - the total will overlap the footer, check the invoice."
-        )
+    locations = [a for a in (locations or []) if a][:LMAX]
 
     invoices = list(dict.fromkeys(it["invoice"] for it in items if it["invoice"]))
-    return dict(policies=pol_rows, items=items, invoice_number=", ".join(invoices))
+    return dict(
+        policies=pol_rows,
+        items=items,
+        locations=locations,
+        invoice_number=", ".join(invoices),
+    )
+
+
+def slot_offset(locations: int) -> int:
+    """Rows the policy/transaction tables move down for the Location table
+    (its header + one row per location); 0 locations = no table."""
+    return locations + 1 if locations else 0
 
 
 def field_values(data: dict, inv: dict) -> dict:
     """{field: (stored value, text shown)} - numbers are stored bare so the
     form's own $ formatting and totals keep working in Acrobat."""
     p, t = max(len(inv["policies"]), 1), max(len(inv["items"]), 1)
+    m = slot_offset(len(inv["locations"]))
     amt = lambda x: (f"{x:.2f}", f"{'-' if x < 0 else ''}${abs(x):,.2f}")
     same = lambda s: (s, s)
     total = round(sum(i["amount"] for i in inv["items"]), 2)
@@ -324,9 +336,10 @@ def field_values(data: dict, inv: dict) -> dict:
         "inv_date": same(data["statement_date"]),
         "cust_name": same(data["name"]),
         "cust_code": same(data["customer_ref"]),
+        "st_loc": same(str(len(inv["locations"]))),
         "st_pol": same(str(p)),
         "st_txn": same(str(t)),
-        f"tot_{p + t - 1}": amt(total),
+        f"tot_{m + p + t - 1}": amt(total),
         # stub fields are calculated by the form in Acrobat; set them too so
         # they show in every viewer
         "stub_name": same(data["name"]),
@@ -338,26 +351,34 @@ def field_values(data: dict, inv: dict) -> dict:
     }
     for n, line in enumerate(data["address"], 1):
         v[f"cust_addr{n}"] = v[f"stub_addr{n}"] = same(line)
+    for n, loc in enumerate(inv["locations"], 1):
+        v[f"loc_addr_{n}"] = same(loc)
     # every policy on the same term -> dates only on the first row
     one_term = len({(r["term_from"], r["term_to"]) for r in inv["policies"]}) == 1
     for r, pol in enumerate(inv["policies"], 1):
-        v[f"co_{r}"] = same(pol["company"])
-        v[f"pnum_{r}"] = same(pol["number"])
+        s = m + r  # policy row r sits in slot s
+        v[f"co_{s}"] = same(pol["company"])
+        v[f"pnum_{s}"] = same(pol["number"])
         if r == 1 or not one_term:
-            v[f"tfrom_{r}"] = same(long_date(pol["term_from"]))
-            v[f"tto_{r}"] = same(long_date(pol["term_to"]))
+            v[f"tfrom_{s}"] = same(long_date(pol["term_from"]))
+            v[f"tto_{s}"] = same(long_date(pol["term_to"]))
     for j, it in enumerate(inv["items"], 1):
-        k = p + j - 1  # transaction row j sits in slot k (see template buttons)
+        k = m + p + j - 1  # transaction row j sits in slot k (see template buttons)
         v[f"tx_type_{k}"] = same(it["transaction"])
         v[f"tx_desc_{k}"] = same(it["description"])
         v[f"tx_amt_{k}"] = amt(it["amount"])
     return {k: val for k, val in v.items() if val[0] != ""}
 
 
-def visibility(p: int, t: int) -> dict:
+def visibility(p: int, t: int, locs: int = 0) -> dict:
     """{field: visible?} - the same layout the template's buttons draw."""
-    vis = {}
-    for r in range(1, PMAX + 1):
+    m = slot_offset(locs)
+    vis = {"lochdr": locs > 0}
+    for l in range(LMAX + 1):
+        vis[f"phdr_{l}"] = l == locs  # policy table header, one per location count
+    for i in range(1, LMAX + 1):
+        vis[f"locB_{i}"] = vis[f"loc_lbl_{i}"] = vis[f"loc_addr_{i}"] = i <= locs
+    for r in range(1, SMAX + 1):
         for f in (
             "plL",
             "plR",
@@ -369,7 +390,7 @@ def visibility(p: int, t: int) -> dict:
             "tfrom",
             "tto",
         ):
-            vis[f"{f}_{r}"] = r <= p
+            vis[f"{f}_{r}"] = m < r <= m + p
         for f in (
             "txh_bg",
             "txhT",
@@ -380,11 +401,11 @@ def visibility(p: int, t: int) -> dict:
             "txh_l3",
             "txh_l4",
         ):
-            vis[f"{f}_{r}"] = r == p
+            vis[f"{f}_{r}"] = r == m + p
     for k in range(1, KMAX + 1):
         for f in ("tlL", "tlR", "tlB", "tx_type", "tx_desc", "tx_amt"):
-            vis[f"{f}_{k}"] = p <= k <= p + t - 1
-        vis[f"tot_lbl_{k}"] = vis[f"tot_{k}"] = k == p + t - 1
+            vis[f"{f}_{k}"] = m + p <= k <= m + p + t - 1
+        vis[f"tot_lbl_{k}"] = vis[f"tot_{k}"] = k == m + p + t - 1
     return vis
 
 
@@ -424,7 +445,9 @@ def split_numbers(text: str, w1: float, w2: float, size: float = 9):
 
 def fill(template: Path, out_path: Path, data: dict, inv: dict):
     values = field_values(data, inv)
-    vis = visibility(max(len(inv["policies"]), 1), max(len(inv["items"]), 1))
+    vis = visibility(
+        max(len(inv["policies"]), 1), max(len(inv["items"]), 1), len(inv["locations"])
+    )
     with pymupdf.open(template) as doc:
         cat = doc.pdf_catalog()
         hebo = doc.xref_get_key(cat, "AcroForm/DR/Font/HeBo")[1]
